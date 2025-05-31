@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  creator-discovery:
+    build: ./creator_discovery
+    ports:
+      - "8001:8001"
+    depends_on:
+      - redis
+
+  ai-communication:
+    build: ./ai_communication
+    ports:
+      - "8002:8002"
+    depends_on:
+      - redis
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+
+  contract-automation:
+    build: ./contract_automation
+    ports:
+      - "8003:8003"
+
+  api-gateway:
+    build: ./api_gateway
+    ports:
+      - "8000:8000"
+    depends_on:
+      - creator-discovery
+      - ai-communication
+      - contract-automation
