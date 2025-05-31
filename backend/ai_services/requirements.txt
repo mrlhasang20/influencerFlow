@@ -1,7 +1,119 @@
+# Core Framework
 fastapi
-uvicorn 
+uvicorn[standard]
 pydantic
+pydantic-settings
+
+# AI and ML
+google-genai
+google-generativeai
 openai
-httpx 
-redis 
+anthropic
+transformers
+torch
+nltk
+spacy
+sentence-transformers
+
+# Database and Caching
+asyncpg
+sqlalchemy
+alembic
+redis[hiredis]
+redis-py-cluster
+
+# Data Processing
+numpy
+scipy
+scikit-learn
+pandas
+polars
+pyarrow
+
+# HTTP and API
+httpx
+aiohttp
+tweepy
+facebook-sdk
+google-api-python-client
+
+# Document Processing
+jinja2
+weasyprint
+python-docx
+markdown
+pypdf2
+reportlab
+
+# Security
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+
+# Monitoring and Logging
+structlog
+python-json-logger
+sentry-sdk[fastapi]
+
+# Task Management
+celery[redis]
+flower
+
+# Environment and Config
 python-dotenv
+dynaconf
+
+# Development Tools
+pytest
+pytest-asyncio
+pytest-cov
+black
+isort
+flake8
+mypy
+pylint
+pre-commit
+
+# Documentation
+mkdocs
+mkdocs-material
+sphinx
+
+# Utilities
+python-dateutil
+pytz
+click
+rich
+tqdm
+
+# Image Processing
+pillow
+opencv-python-headless
+
+# Communication
+sendgrid
+twilio
+
+# Vector Databases
+chromadb
+faiss-cpu
+pinecone-client
+
+# Speech and Audio
+elevenlabs
+speechrecognition
+pydub
+openai-whisper
+gtts
+edge-tts
+
+# Analytics and Visualization
+plotly
+seaborn
+matplotlib
+
+# Geographic
+geopy
+
+# Financial
+forex-python

@@ -1,171 +1,387 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import Dict, List, Optional
-import asyncio
-import json
-from openai import AsyncOpenAI
-import os
-from dotenv import load_dotenv
-import uvicorn
+import sys
 from pathlib import Path
 
-# Get the parent directory path (ai_services)
-parent_dir = Path(__file__).parent.parent
-# Load environment variables from .env file in parent directory
-load_dotenv(dotenv_path=parent_dir / ".env")
+# Add the parent directory to Python path
+sys.path.append(str(Path(__file__).parent.parent))
 
-# Debug: Print the API key (first few characters for security)
-api_key = os.getenv("OPENAI_API_KEY")
-print(f"API Key loaded: {'Yes' if api_key else 'No'}")
-if api_key:
-    print(f"API Key starts with: {api_key[:8]}...")
+from fastapi import FastAPI, HTTPException, Depends, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from typing import List, Optional, Dict, Any
+import uvicorn
+import time
+from contextlib import asynccontextmanager
 
-app = FastAPI(title="AI Communication Service")
+from services.outreach_service import OutreachService
+from services.negotiation_service import NegotiationService
+from services.voice_service import VoiceService
+from schemas.communication_schemas import (
+    # Request schemas
+    OutreachRequest, NegotiationRequest, ContentAnalysisRequest,
+    VoiceGenerationRequest, BatchOutreachRequest,
+    
+    # Response schemas
+    OutreachResponse, NegotiationResponse, ContentAnalysisResponse,
+    VoiceGenerationResponse, BatchOutreachResponse,
+    CommunicationHealthCheck, NegotiationMetrics,
+    
+    # Enums
+    MessageType, NegotiationAction, CommunicationTone
+)
+from shared.config import settings
+from shared.utils import Timer, generate_id
+from shared.redis_client import redis_client
 
-# Initialize OpenAI client
-client = AsyncOpenAI(api_key=api_key)
+# Global service instances
+outreach_service = OutreachService()
+negotiation_service = NegotiationService()
+voice_service = VoiceService()
 
-class OutreachRequest(BaseModel):
-    creator_profile: Dict
-    campaign_brief: Dict
-    message_type: str = "initial_outreach"
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan events"""
+    # Startup
+    print("🚀 Starting AI Communication Service...")
+    try:
+        # Initialize services
+        print("✅ AI Communication Service started successfully")
+    except Exception as e:
+        print(f"❌ Failed to start service: {e}")
+    
+    yield
+    
+    # Shutdown
+    print("👋 Shutting down AI Communication Service...")
 
-class OutreachResponse(BaseModel):
-    message: str
-    subject: str
-    personalization_score: float
+# FastAPI app with lifespan
+app = FastAPI(
+    title="AI Communication Service",
+    description="AI-powered communication automation for influencer marketing using Gemini",
+    version="1.0.0",
+    lifespan=lifespan
+)
 
-class NegotiationRequest(BaseModel):
-    conversation_history: List[Dict]
-    creator_proposal: Dict
-    brand_constraints: Dict
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Configure appropriately for production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-class NegotiationResponse(BaseModel):
-    action: str  # "accept", "counter", "reject"
-    message: str
-    proposed_terms: Optional[Dict] = None
+@app.get("/health", response_model=CommunicationHealthCheck)
+async def health_check():
+    """Health check endpoint"""
+    try:
+        # Check Redis connection
+        redis_connected = redis_client.exists("test_key") is not None
+        
+        # Count active conversations and negotiations (simplified)
+        active_conversations = 0
+        active_negotiations = 0
+        
+        return CommunicationHealthCheck(
+            service_status="healthy",
+            gemini_api_status="connected" if settings.google_api_key else "not_configured",
+            voice_service_status="available",
+            active_conversations=active_conversations,
+            active_negotiations=active_negotiations,
+            messages_generated_today=123,  # Would be from analytics
+            avg_generation_time_ms=450.0
+        )
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Service unhealthy: {str(e)}")
 
+# Outreach endpoints
 @app.post("/generate-outreach", response_model=OutreachResponse)
 async def generate_outreach_message(request: OutreachRequest):
     """Generate personalized outreach message"""
     try:
-        # Debug: Check if we're using OpenAI or template
-        if not api_key:
-            print("No API key found, using template")
-            return await generate_template_outreach(request)
-            
-        print("Attempting to use OpenAI API...")
-        system_prompt = '''You are an expert influencer marketing specialist. Create professional, 
-        personalized outreach messages that are engaging and respectful. The message should:
-        1. Address the creator by name
-        2. Reference their specific content/platform
-        3. Clearly explain the collaboration opportunity
-        4. Be concise but comprehensive
-        5. Include a clear call-to-action'''
-        
-        user_prompt = f'''
-        Create an {request.message_type} message for:
-        
-        Creator: {request.creator_profile.get('name')}
-        Platform: {request.creator_profile.get('platform')}
-        Followers: {request.creator_profile.get('followers', 0):,}
-        Content: {request.creator_profile.get('description')}
-        
-        Campaign:
-        Brand: {request.campaign_brief.get('brand_name', 'Our Brand')}
-        Product: {request.campaign_brief.get('product_name', 'Our Product')}
-        Goal: {request.campaign_brief.get('goal', 'Increase brand awareness')}
-        Budget: {request.campaign_brief.get('budget_range', '$500-1000')}
-        Timeline: {request.campaign_brief.get('timeline', '2 weeks')}
-        '''
-        
-        try:
-            response = await client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.7,
-                max_tokens=300
-            )
-            
-            message = response.choices[0].message.content
-            subject = f"Collaboration Opportunity with {request.campaign_brief.get('brand_name', 'Our Brand')}"
-            
-            return OutreachResponse(
-                message=message,
-                subject=subject,
-                personalization_score=0.8
-            )
-        except Exception as e:
-            print(f"OpenAI API call failed: {str(e)}")
-            return await generate_template_outreach(request)
-            
+        with Timer(f"Outreach generation API - {request.message_type}"):
+            result = await outreach_service.generate_outreach_message(request)
+            return result
     except Exception as e:
-        print(f"General error: {str(e)}")
-        return await generate_template_outreach(request)
+        print(f"Outreach generation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Outreach generation failed: {str(e)}")
 
-async def generate_template_outreach(request: OutreachRequest):
-    """Fallback template-based message generation"""
-    creator = request.creator_profile
-    campaign = request.campaign_brief
+@app.post("/outreach/batch", response_model=BatchOutreachResponse)
+async def generate_batch_outreach(request: BatchOutreachRequest):
+    """Generate outreach messages for multiple creators"""
+    try:
+        result = await outreach_service.generate_batch_outreach(request)
+        return result
+    except Exception as e:
+        print(f"Batch outreach error: {e}")
+        raise HTTPException(status_code=500, detail=f"Batch outreach failed: {str(e)}")
+
+@app.get("/outreach/suggestions")
+async def get_message_suggestions(
+    creator_id: str,
+    campaign_id: str
+):
+    """Get message customization suggestions"""
+    try:
+        # This would load creator and campaign data
+        creator_profile = {"name": "Creator", "platform": "Instagram"}  # Mock data
+        campaign_brief = {"brand_name": "Brand", "campaign_name": "Campaign"}  # Mock data
+        
+        suggestions = await outreach_service.get_message_suggestions(creator_profile, campaign_brief)
+        return {"suggestions": suggestions}
+    except Exception as e:
+        print(f"Suggestions error: {e}")
+        raise HTTPException(status_code=500, detail=f"Suggestions failed: {str(e)}")
+
+# Negotiation endpoints
+@app.post("/negotiation/start", response_model=NegotiationResponse)
+async def start_negotiation(request: NegotiationRequest):
+    """Start a new negotiation process"""
+    try:
+        result = await negotiation_service.start_negotiation(request)
+        return result
+    except Exception as e:
+        print(f"Negotiation start error: {e}")
+        raise HTTPException(status_code=500, detail=f"Negotiation start failed: {str(e)}")
+
+@app.post("/negotiation/respond", response_model=NegotiationResponse)
+async def process_negotiation_response(request: NegotiationRequest):
+    """Process creator response in ongoing negotiation"""
+    try:
+        result = await negotiation_service.process_negotiation_response(request)
+        return result
+    except Exception as e:
+        print(f"Negotiation response error: {e}")
+        raise HTTPException(status_code=500, detail=f"Negotiation response failed: {str(e)}")
+
+@app.get("/negotiation/{negotiation_id}/status")
+async def get_negotiation_status(negotiation_id: str):
+    """Get current status of a negotiation"""
+    try:
+        status = await negotiation_service.get_negotiation_status(negotiation_id)
+        return status
+    except Exception as e:
+        print(f"Negotiation status error: {e}")
+        raise HTTPException(status_code=500, detail=f"Status retrieval failed: {str(e)}")
+
+@app.get("/negotiation/{negotiation_id}/history")
+async def get_negotiation_history(negotiation_id: str):
+    """Get conversation history for a negotiation"""
+    try:
+        history = await negotiation_service.get_negotiation_history(negotiation_id)
+        return {"negotiation_id": negotiation_id, "history": history}
+    except Exception as e:
+        print(f"Negotiation history error: {e}")
+        raise HTTPException(status_code=500, detail=f"History retrieval failed: {str(e)}")
+
+@app.get("/negotiation/{negotiation_id}/metrics", response_model=NegotiationMetrics)
+async def get_negotiation_metrics(negotiation_id: str):
+    """Get metrics for a specific negotiation"""
+    try:
+        metrics = await negotiation_service.get_negotiation_metrics(negotiation_id)
+        if not metrics:
+            raise HTTPException(status_code=404, detail="Negotiation metrics not found")
+        return metrics
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Negotiation metrics error: {e}")
+        raise HTTPException(status_code=500, detail=f"Metrics retrieval failed: {str(e)}")
+
+@app.post("/negotiation/{negotiation_id}/end")
+async def end_negotiation(
+    negotiation_id: str,
+    final_terms: Dict[str, Any],
+    outcome: str
+):
+    """End a negotiation with final terms"""
+    try:
+        success = await negotiation_service.end_negotiation(negotiation_id, final_terms, outcome)
+        return {"negotiation_id": negotiation_id, "ended": success, "outcome": outcome}
+    except Exception as e:
+        print(f"End negotiation error: {e}")
+        raise HTTPException(status_code=500, detail=f"End negotiation failed: {str(e)}")
+
+# Voice generation endpoints
+@app.post("/voice/generate", response_model=VoiceGenerationResponse)
+async def generate_voice(request: VoiceGenerationRequest):
+    """Generate voice audio from text"""
+    try:
+        result = await voice_service.generate_voice(request)
+        return result
+    except Exception as e:
+        print(f"Voice generation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Voice generation failed: {str(e)}")
+
+@app.get("/voice/voices")
+async def get_available_voices(language: str = "en"):
+    """Get list of available voices"""
+    try:
+        voices = await voice_service.get_available_voices(language)
+        return {"language": language, "voices": voices}
+    except Exception as e:
+        print(f"Get voices error: {e}")
+        raise HTTPException(status_code=500, detail=f"Get voices failed: {str(e)}")
+
+@app.post("/voice/outreach", response_model=VoiceGenerationResponse)
+async def convert_outreach_to_voice(
+    outreach_message: str,
+    creator_profile: Dict[str, Any],
+    voice_preferences: Optional[Dict[str, Any]] = None
+):
+    """Convert outreach message to voice"""
+    try:
+        result = await voice_service.convert_outreach_to_voice(
+            outreach_message, creator_profile, voice_preferences
+        )
+        return result
+    except Exception as e:
+        print(f"Outreach voice conversion error: {e}")
+        raise HTTPException(status_code=500, detail=f"Voice conversion failed: {str(e)}")
+
+@app.post("/voice/batch")
+async def batch_voice_generation(
+    messages: List[Dict[str, str]],
+    voice_settings: Dict[str, Any]
+):
+    """Generate voice for multiple messages"""
+    try:
+        results = await voice_service.batch_voice_generation(messages, voice_settings)
+        return {"total_messages": len(messages), "successful_generations": len(results), "results": results}
+    except Exception as e:
+        print(f"Batch voice generation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Batch voice generation failed: {str(e)}")
+
+# Content analysis endpoints
+@app.post("/analysis/content", response_model=ContentAnalysisResponse)
+async def analyze_content(request: ContentAnalysisRequest):
+    """Analyze creator content for brand safety and insights"""
+    try:
+        # Use Gemini client for content analysis
+        from .models.gemini_client import GeminiAIClient
+        
+        gemini_client = GeminiAIClient()
+        analysis_result = await gemini_client.analyze_creator_content(
+            content_samples=request.content_samples,
+            analysis_type=request.analysis_type
+        )
+        
+        # Convert to response format
+        response = ContentAnalysisResponse(
+            analysis_type=request.analysis_type,
+            creator_id=request.creator_id,
+            overall_score=analysis_result.get("overall_score", 75.0),
+            safety_score=analysis_result.get("safety_score"),
+            risk_factors=analysis_result.get("risk_factors", []),
+            positive_indicators=analysis_result.get("positive_indicators", []),
+            content_themes=analysis_result.get("content_themes", []),
+            language_analysis=analysis_result.get("language_analysis", {}),
+            audience_insights=analysis_result.get("audience_insights", {}),
+            recommendations=analysis_result.get("recommendations", [])
+        )
+        
+        return response
+    except Exception as e:
+        print(f"Content analysis error: {e}")
+        raise HTTPException(status_code=500, detail=f"Content analysis failed: {str(e)}")
+
+# Utility endpoints
+@app.post("/utils/validate-text")
+async def validate_text_for_voice(text: str):
+    """Validate text for voice generation"""
+    try:
+        validation_results = voice_service.validate_text_for_voice(text)
+        return {"text": text[:50] + "..." if len(text) > 50 else text, "validation": validation_results}
+    except Exception as e:
+        print(f"Text validation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Text validation failed: {str(e)}")
+
+@app.get("/analytics/voice/{voice_id}")
+async def get_voice_analytics(voice_id: str, days: int = 7):
+    """Get analytics for voice usage"""
+    try:
+        analytics = await voice_service.get_voice_analytics(voice_id, days)
+        return analytics
+    except Exception as e:
+        print(f"Voice analytics error: {e}")
+        raise HTTPException(status_code=500, detail=f"Voice analytics failed: {str(e)}")
+
+# Debug endpoints
+@app.get("/debug/test-gemini")
+async def debug_test_gemini():
+    """Debug endpoint to test Gemini API connection"""
+    if not settings.debug:
+        raise HTTPException(status_code=404, detail="Debug endpoint not available")
     
-    template_message = f'''Hi {creator.get('name', 'there')}!
+    try:
+        from .models.gemini_client import GeminiAIClient
+        
+        gemini_client = GeminiAIClient()
+        
+        # Test basic message generation
+        test_creator = {
+            "name": "Test Creator",
+            "platform": "Instagram",
+            "content_style": "fitness and wellness content"
+        }
+        
+        test_campaign = {
+            "brand_name": "TestBrand",
+            "campaign_name": "Test Campaign",
+            "goal": "Brand awareness"
+        }
+        
+        message = await gemini_client.generate_outreach_message(
+            creator_profile=test_creator,
+            campaign_brief=test_campaign,
+            message_type="initial_outreach"
+        )
+        
+        return {
+            "gemini_status": "working",
+            "test_message_length": len(message),
+            "test_message_preview": message[:100] + "..." if len(message) > 100 else message
+        }
+    except Exception as e:
+        return {"gemini_status": "error", "error": str(e)}
 
-I've been following your {creator.get('platform', 'content')} and really love your {', '.join(creator.get('categories', ['content'])[:2])} posts! Your {creator.get('description', 'content')} really resonates with our target audience.
-
-We'd love to partner with you on an exciting campaign for {campaign.get('brand_name', 'our brand')}. Here's what we have in mind:
-
-📍 Campaign: {campaign.get('goal', 'Brand awareness campaign')}
-💰 Budget: {campaign.get('budget_range', '$500-1000')}
-⏰ Timeline: {campaign.get('timeline', '2 weeks')}
-📦 What we're looking for: {', '.join(campaign.get('deliverables', ['1 post', '1 story']))}
-
-We believe your authentic voice and engaged community of {creator.get('followers', 0):,} followers would be perfect for this collaboration.
-
-Would you be interested in learning more? I'd be happy to send over more details and discuss how we can make this work for both of us!
-
-Looking forward to hearing from you!
-
-Best regards,
-[Your Name]
-{campaign.get('brand_name', 'Brand')} Marketing Team'''
-
-    return OutreachResponse(
-        message=template_message,
-        subject=f"Partnership Opportunity with {campaign.get('brand_name', 'Our Brand')}",
-        personalization_score=0.6
-    )
-
-@app.post("/negotiate", response_model=NegotiationResponse)
-async def handle_negotiation(request: NegotiationRequest):
-    """Handle basic negotiation logic"""
-    creator_rate = request.creator_proposal.get('rate', 0)
-    max_budget = request.brand_constraints.get('max_budget', 0)
+@app.post("/debug/test-workflow")
+async def debug_test_workflow():
+    """Debug endpoint to test complete communication workflow"""
+    if not settings.debug:
+        raise HTTPException(status_code=404, detail="Debug endpoint not available")
     
-    if creator_rate <= max_budget:
-        return NegotiationResponse(
-            action="accept",
-            message=f"Great! We can work with your proposed rate of ${creator_rate}. Let's move forward with the campaign.",
-            proposed_terms=request.creator_proposal
+    try:
+        # Test outreach generation
+        test_request = OutreachRequest(
+            creator_profile={
+                "name": "Test Creator",
+                "platform": "Instagram",
+                "content_style": "lifestyle and travel content",
+                "categories": ["travel", "lifestyle"]
+            },
+            campaign_brief={
+                "brand_name": "TestBrand",
+                "campaign_name": "Summer Campaign",
+                "goal": "Brand awareness",
+                "target_audience": "young adults"
+            }
         )
-    elif creator_rate <= max_budget * 1.2:  # Within 20% of budget
-        counter_offer = int(max_budget * 0.9)
-        return NegotiationResponse(
-            action="counter",
-            message=f"Thanks for your proposal! Our budget for this campaign is ${counter_offer}. Would this work for you?",
-            proposed_terms={**request.creator_proposal, "rate": counter_offer}
-        )
-    else:
-        return NegotiationResponse(
-            action="reject",
-            message="Thank you for your interest. Unfortunately, your rate is outside our current budget range. We'll keep you in mind for future campaigns with larger budgets."
-        )
-
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy", "service": "ai-communication"}
+        
+        outreach_result = await outreach_service.generate_outreach_message(test_request)
+        
+        return {
+            "workflow_status": "success",
+            "outreach_generated": True,
+            "message_length": outreach_result.word_count,
+            "personalization_score": outreach_result.personalization_score
+        }
+    except Exception as e:
+        return {"workflow_status": "error", "error": str(e)}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8002)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=settings.ai_communication_port,
+        reload=settings.debug,
+        log_level="info"
+    )
