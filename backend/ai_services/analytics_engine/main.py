@@ -3,6 +3,18 @@
 from fastapi import FastAPI, HTTPException, Depends
 from typing import List, Dict, Any, Optional
 import uvicorn
+import sys
+import os
+from sqlalchemy.orm import Session
+
+# Add the parent directory to Python path BEFORE importing from shared
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
+# Now we can import from shared
+from shared.database import get_db
+from shared.config import settings
+
+# Then import local modules
 from services.analytics_service import AnalyticsService
 from services.reporting_service import ReportingService
 from schemas.analytics_schemas import (
@@ -11,10 +23,6 @@ from schemas.analytics_schemas import (
     ROIAnalysisRequest, ROIAnalysisResponse,
     ReportGenerationRequest, ReportResponse
 )
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from shared.config import settings
 
 app = FastAPI(
     title="Analytics Engine Service",
@@ -27,13 +35,14 @@ analytics_service = AnalyticsService()
 reporting_service = ReportingService()
 
 @app.post("/analyze-campaign", response_model=CampaignAnalyticsResponse)
-async def analyze_campaign(request: CampaignAnalyticsRequest):
+async def analyze_campaign(request: CampaignAnalyticsRequest, db: Session = Depends(get_db)):
     """Analyze campaign performance and provide insights"""
     try:
         analysis = await analytics_service.analyze_campaign_performance(
             request.campaign_id,
             request.metrics,
-            request.time_period
+            request.time_period,
+            db
         )
         return analysis
     except Exception as e:

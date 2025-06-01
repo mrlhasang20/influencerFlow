@@ -185,12 +185,12 @@ All endpoints below are available via `http://localhost:8000/api/v1/ai/`.
 - **Body Example:**
     ```json
     {
-      "creator_profile": {
+    "creator_profile": {
         "name": "Alex Chen",
         "platform": "YouTube",
         "content_style": "tech reviews"
-      },
-      "campaign_brief": {
+    },
+    "campaign_brief": {
         "brand_name": "TechGadgets Inc",
         "campaign_name": "Smart Home Launch",
         "goal": "brand_awareness"

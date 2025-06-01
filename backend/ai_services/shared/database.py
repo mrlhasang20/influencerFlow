@@ -1,9 +1,9 @@
 # Postgres integration
-from sqlalchemy import create_engine, Column, String, Integer, Float, JSON, DateTime, Boolean
+from sqlalchemy import create_engine, Column, String, Integer, Float, JSON, DateTime, Boolean, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
-from config import settings
+from .config import settings
 
 # Database engine
 engine = create_engine(settings.postgres_url, echo=settings.debug)
@@ -44,7 +44,7 @@ class Campaign(Base):
     timeline = Column(String)
     deliverables = Column(JSON, default=[])
     status = Column(String, default="draft")
-    created_by = Column(String)
+    created_by = Column(String, ForeignKey("users.id"))
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -72,6 +72,52 @@ class Contract(Base):
     status = Column(String, default="draft")  # draft, sent, signed, executed
     created_at = Column(DateTime, default=datetime.utcnow)
     signed_at = Column(DateTime)
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(String, primary_key=True, index=True)
+    email = Column(String, unique=True, nullable=False)
+    name = Column(String, nullable=False)
+    hashed_password = Column(String, nullable=False)
+    role = Column(String, default="brand")  # brand, agency, admin
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class Payment(Base):
+    __tablename__ = "payments"
+    id = Column(String, primary_key=True, index=True)
+    contract_id = Column(String, ForeignKey("contracts.id"), nullable=False)
+    amount = Column(Float, nullable=False)
+    status = Column(String, default="pending")  # pending, completed, failed
+    due_date = Column(DateTime)
+    paid_at = Column(DateTime)
+    method = Column(String)  # stripe, razorpay, etc.
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class CampaignAnalytics(Base):
+    __tablename__ = "campaign_analytics"
+    id = Column(String, primary_key=True, index=True)
+    campaign_id = Column(String, ForeignKey("campaigns.id"), nullable=False)
+    metrics = Column(JSON, default={})  # impressions, engagement, etc.
+    report_url = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class ActivityLog(Base):
+    __tablename__ = "activity_logs"
+    id = Column(String, primary_key=True, index=True)
+    user_id = Column(String, ForeignKey("users.id"))
+    action = Column(String)
+    details = Column(JSON, default={})
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class Message(Base):
+    __tablename__ = "messages"
+    id = Column(String, primary_key=True, index=True)
+    collaboration_id = Column(String, ForeignKey("collaborations.id"))
+    sender = Column(String)
+    recipient = Column(String)
+    message_type = Column(String)
+    content = Column(String)
+    sent_at = Column(DateTime, default=datetime.utcnow)
 
 # Database utilities
 def get_db():

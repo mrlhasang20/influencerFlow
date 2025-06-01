@@ -12,9 +12,16 @@ import numpy as np
 from datetime import datetime, timedelta
 import sys
 import os
+from sqlalchemy.orm import Session
 
+# Add the parent directory to Python path BEFORE importing from shared
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+
+# Now we can import from shared
+from shared.database import get_db, CampaignAnalytics as CampaignAnalyticsORM, Campaign
 from shared.config import settings
+
+# Then import local modules
 from schemas.analytics_schemas import (
     CampaignAnalyticsResponse, PerformanceInsight, PerformancePrediction,
     PerformancePredictionResponse, ROIAnalysisResponse, CampaignMetrics, TimePeriod
@@ -70,10 +77,16 @@ class AnalyticsService:
         self, 
         campaign_id: str, 
         metrics: CampaignMetrics, 
-        time_period: TimePeriod
+        time_period: TimePeriod,
+        db: Session = None
     ) -> CampaignAnalyticsResponse:
         """Comprehensive campaign performance analysis"""
         try:
+            # Fetch campaign analytics from DB
+            campaign_analytics = db.query(CampaignAnalyticsORM).filter(CampaignAnalyticsORM.campaign_id == campaign_id).first()
+            if not campaign_analytics:
+                raise Exception(f"No analytics found for campaign {campaign_id}")
+
             # Calculate derived metrics
             calculated_metrics = self._calculate_derived_metrics(metrics)
             
@@ -130,12 +143,11 @@ class AnalyticsService:
     
     def _get_relevant_benchmarks(self, campaign_id: str) -> Dict[str, float]:
         """Get relevant industry benchmarks for the campaign"""
-        # For demo purposes, use Instagram fitness benchmarks
-        return {
-            "engagement_rate": 3.8,
-            "ctr": 0.9,
-            "conversion_rate": 1.2
-        }
+        # Query real benchmarks from database
+        campaign = get_db().query(Campaign).filter(Campaign.id == campaign_id).first()
+        if campaign:
+            return campaign.benchmarks
+        return {}  # Fallback to empty dict if no benchmarks found
     
     async def _generate_ai_insights(
         self, 
@@ -251,17 +263,17 @@ class AnalyticsService:
             conv_rate = metrics["conversion_rate"]
             if conv_rate > 2.0:
                 findings.append(f"Strong conversion rate of {conv_rate:.1f}%")
-                recommendations.append("Scale successful content formats")
-            elif conv_rate < 1.0:
+                recommendations.append("Scale successful conversion strategies")
+            elif conv_rate < 0.5:
                 findings.append(f"Low conversion rate of {conv_rate:.1f}%")
                 recommendations.append("Optimize call-to-action and landing pages")
         
         return {
-            "key_findings": findings or ["Campaign performance analyzed"],
-            "recommendations": recommendations or ["Continue monitoring and optimization"],
+            "key_findings": findings or ["Performance analysis completed", "Campaign metrics analyzed"],
+            "recommendations": recommendations or ["Continue monitoring performance", "Optimize based on top-performing content"],
             "predicted_improvements": {
-                "engagement_improvement": "5-10% potential increase",
-                "roi_optimization": "Performance optimization opportunities identified"
+                "engagement_improvement": "5-15% potential increase",
+                "roi_optimization": "10-20% improvement possible"
             }
         }
     
@@ -270,32 +282,48 @@ class AnalyticsService:
         metrics: Dict[str, float], 
         benchmarks: Dict[str, float]
     ) -> List[PerformanceInsight]:
-        """Create detailed performance insights"""
+        """Create performance insights based on metrics and benchmarks"""
         insights = []
         
-        for metric_name, value in metrics.items():
-            if metric_name in benchmarks:
-                benchmark = benchmarks[metric_name]
-                
-                # Determine performance vs benchmark
-                performance_ratio = value / benchmark if benchmark > 0 else 1
-                
-                if performance_ratio > 1.2:
-                    performance_desc = "Excellent - Above benchmark"
-                    recommendation = f"Maintain and scale successful {metric_name} strategies"
-                elif performance_ratio > 0.8:
-                    performance_desc = "Good - Near benchmark"
-                    recommendation = f"Small optimizations could improve {metric_name}"
-                else:
-                    performance_desc = "Needs improvement - Below benchmark"
-                    recommendation = f"Focus on improving {metric_name} through content optimization"
-                
+        # Engagement rate insight
+        if "engagement_rate" in metrics and "engagement_rate" in benchmarks:
+            eng_rate = metrics["engagement_rate"]
+            benchmark = benchmarks["engagement_rate"]
+            if eng_rate > benchmark:
                 insights.append(PerformanceInsight(
-                    metric=metric_name,
-                    value=value,
+                    metric="engagement_rate",
+                    value=eng_rate,
                     benchmark=benchmark,
-                    performance_vs_benchmark=performance_desc,
-                    recommendation=recommendation
+                    insight="Above benchmark",
+                    recommendation="Leverage high engagement with more frequent posting"
+                ))
+            else:
+                insights.append(PerformanceInsight(
+                    metric="engagement_rate",
+                    value=eng_rate,
+                    benchmark=benchmark,
+                    insight="Below benchmark",
+                    recommendation="Improve content quality and posting times"
+                ))
+        
+        # Conversion rate insight
+        if "conversion_rate" in metrics:
+            conv_rate = metrics["conversion_rate"]
+            if conv_rate > 2.0:
+                insights.append(PerformanceInsight(
+                    metric="conversion_rate",
+                    value=conv_rate,
+                    benchmark=1.2,
+                    insight="Strong conversion rate",
+                    recommendation="Scale successful conversion strategies"
+                ))
+            else:
+                insights.append(PerformanceInsight(
+                    metric="conversion_rate",
+                    value=conv_rate,
+                    benchmark=1.2,
+                    insight="Low conversion rate",
+                    recommendation="Optimize call-to-action and landing pages"
                 ))
         
         return insights
@@ -367,7 +395,7 @@ class AnalyticsService:
         predicted_impressions = followers * 0.3  # Assuming 30% of followers see content
         predicted_engagement = predicted_impressions * (engagement_rate / 100)
         predicted_clicks = predicted_engagement * 0.05  # 5% of engaged users click
-        predicted_conversions = predicted_clicks * 0.02  # 2% conversion rate
+        predicted_conversions = predicted_clicks * 0.02
         
         predictions = [
             PerformancePrediction(
@@ -494,24 +522,20 @@ class AnalyticsService:
         return suggestions[:5]  # Limit to top 5 suggestions
     
     async def demo_analysis(self, sample_campaign: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate demo analysis for testing"""
-        return {
-            "analysis_type": "demo",
-            "campaign_id": sample_campaign.get("campaign_id"),
-            "performance_score": 78.5,
-            "key_metrics": {
-                "engagement_rate": 4.2,
-                "click_through_rate": 1.1,
-                "conversion_rate": 2.1
-            },
-            "ai_insights": [
-                "Strong engagement rate indicates good audience connection",
-                "Click-through rate above industry average",
-                "Conversion rate suggests effective call-to-action"
-            ],
-            "recommendations": [
-                "Scale successful content formats",
-                "Test posting at different times",
-                "Consider expanding to similar audiences"
-            ]
-        }
+        """Demo analysis for sample campaign"""
+        try:
+            metrics = CampaignMetrics(**sample_campaign["metrics"])
+            time_period = TimePeriod(start_date=datetime.now() - timedelta(days=30), end_date=datetime.now())
+            
+            analysis = await self.analyze_campaign_performance(
+                sample_campaign["campaign_id"],
+                metrics,
+                time_period
+            )
+            
+            return {
+                "campaign_id": sample_campaign["campaign_id"],
+                "analysis": analysis.dict()
+            }
+        except Exception as e:
+            return {"error": str(e), "status": "demo_failed"}

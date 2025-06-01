@@ -4,6 +4,7 @@ from typing import List, Dict, Optional
 import asyncio
 import sys
 from pathlib import Path
+import json
 
 # Add the parent directory to Python path
 sys.path.append(str(Path(__file__).parent.parent.parent))
@@ -12,6 +13,7 @@ from shared.config import settings
 from shared.redis_client import redis_client
 from shared.utils import retry_async, Timer
 import time
+from shared.database import get_db_session, Creator
 
 class GeminiEmbeddingEngine:
     def __init__(self):
@@ -148,3 +150,25 @@ class GeminiEmbeddingEngine:
     def get_embedding_dimension(self) -> int:
         """Get the dimension of embeddings produced by the model"""
         return 768  # text-embedding-004 produces 768-dimensional vectors
+    
+    async def get_or_generate_creator_embedding(self, creator_id: str, creator_data: Dict) -> Optional[List[float]]:
+        """Get embedding from database or generate if not exists"""
+        session = get_db_session()
+        try:
+            creator = session.query(Creator).filter(Creator.id == creator_id).first()
+            if creator and creator.embedding:
+                # If embedding exists in database, use it
+                return json.loads(creator.embedding)
+            else:
+                # Generate new embedding
+                embedding = await self.generate_creator_embedding(creator_data)
+                if embedding and creator:
+                    # Store in database for future use
+                    creator.embedding = json.dumps(embedding)
+                    session.commit()
+                return embedding
+        except Exception as e:
+            print(f"Error getting/generating creator embedding: {e}")
+            return None
+        finally:
+            session.close()

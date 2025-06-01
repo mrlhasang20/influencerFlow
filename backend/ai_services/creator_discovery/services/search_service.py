@@ -10,29 +10,69 @@ from schemas.creator_schemas import (
 
 import sys
 from pathlib import Path
+import json
 
 # Add the parent directory to Python path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from shared.config import DEMO_CREATORS
 from shared.utils import Timer, calculate_creator_score
 from shared.redis_client import redis_client
+from sqlalchemy.orm import Session
+from models.creator_model import Creator
 
 class CreatorSearchService:
     def __init__(self):
         self.search_engine = SemanticSearchEngine()
-        self.creators_data = DEMO_CREATORS
     
     async def advanced_search(
         self,
         query: str,
         filters: Optional[SearchFilters] = None,
-        limit: int = 10
+        limit: int = 10,
+        db: Session = None
     ) -> CreatorSearchResponse:
         """Perform advanced search with comprehensive filtering"""
         start_time = time.time()
         
         try:
             with Timer(f"Advanced search for: '{query}'"):
+                # Query real database and convert to dictionary
+                creators_list = db.query(Creator).all()
+                creators = {}
+                
+                print(f"Found {len(creators_list)} creators in database")
+                
+                for creator in creators_list:
+                    # Convert embedding from string to list if it exists
+                    embedding = None
+                    if creator.embedding:
+                        try:
+                            if isinstance(creator.embedding, str):
+                                embedding = json.loads(creator.embedding)
+                            else:
+                                embedding = creator.embedding
+                            print(f"✅ Successfully loaded embedding for creator {creator.id}")
+                        except Exception as e:
+                            print(f"❌ Failed to parse embedding for creator {creator.id}: {e}")
+                    
+                    creators[creator.id] = {
+                        'id': creator.id,
+                        'name': creator.name,
+                        'handle': creator.handle,
+                        'platform': creator.platform,
+                        'followers': creator.followers,
+                        'engagement_rate': creator.engagement_rate,
+                        'categories': creator.categories if isinstance(creator.categories, list) else [],
+                        'demographics': creator.demographics if isinstance(creator.demographics, dict) else {},
+                        'content_style': creator.content_style,
+                        'language': creator.language,
+                        'location': creator.location,
+                        'collaboration_rate': creator.collaboration_rate,
+                        'response_rate': creator.response_rate,
+                        'embedding': embedding,
+                        'is_verified': creator.is_verified
+                    }
+                
                 # Convert SearchFilters to dict for the search engine
                 filter_dict = {}
                 if filters:
@@ -57,20 +97,16 @@ class CreatorSearchService:
                     if filters.response_rate_min is not None:
                         filter_dict["response_rate_min"] = filters.response_rate_min
                 
+                print(f"Applying filters: {filter_dict}")
+                
                 # Perform semantic search
                 search_results = await self.search_engine.search_creators(
                     query=query,
-                    creators=self.creators_data,
+                    creators=creators,
                     top_k=limit,
                     filters=filter_dict,
                     similarity_threshold=0.2
                 )
-                
-                # Apply additional filters
-                if filters and filters.verified_only:
-                    # Filter for verified creators (if we had this data)
-                    # For demo, we'll just keep all results
-                    pass
                 
                 # Convert to response format
                 recommendations = []
@@ -107,6 +143,8 @@ class CreatorSearchService:
                 
         except Exception as e:
             print(f"Advanced search error: {e}")
+            import traceback
+            traceback.print_exc()
             return CreatorSearchResponse(
                 results=[],
                 total_found=0,
@@ -160,11 +198,17 @@ class CreatorSearchService:
         target_age_group: str,
         target_gender: Optional[str] = None,
         target_locations: Optional[List[str]] = None,
-        limit: int = 10
+        limit: int = 10,
+        db: Session = None
     ) -> List[CreatorRecommendation]:
         """Search creators by audience demographics"""
         try:
             matching_creators = []
+            
+            # Query creators with matching demographics from DB
+            creators = db.query(Creator).filter(
+                Creator.demographics['age_group'].astext == target_age_group
+            ).all()
             
             for creator_id, creator_data in self.creators_data.items():
                 demographics = creator_data.get("demographics", {})

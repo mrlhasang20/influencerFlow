@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+import uuid
 
 # Add the parent directory to Python path
 sys.path.append(str(Path(__file__).parent.parent.parent))
@@ -16,6 +17,7 @@ from schemas.communication_schemas import (
 from shared.utils import Timer, clean_text, generate_id
 from shared.redis_client import redis_client
 from shared.config import settings, GEMINI_CONFIG
+from shared.database import get_db_session, Message
 
 class OutreachService:
     def __init__(self):
@@ -67,6 +69,19 @@ class OutreachService:
                 
                 print("creator_profile:", request.creator_profile)
                 print("campaign_brief:", request.campaign_brief)
+                
+                session = get_db_session()
+                msg = Message(
+                    id=str(uuid.uuid4()),
+                    collaboration_id=request.collaboration_id,
+                    sender="brand",
+                    recipient=request.creator_profile.get("email"),
+                    message_type="outreach",
+                    content=cleaned_message
+                )
+                session.add(msg)
+                session.commit()
+                session.close()
                 
                 return OutreachResponse(
                     message=cleaned_message,

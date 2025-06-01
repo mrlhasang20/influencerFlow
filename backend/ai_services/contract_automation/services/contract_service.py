@@ -7,6 +7,7 @@ import uuid
 import json
 from models.contract_generator import ContractGenerator
 from schemas.contract_schemas import TemplateResponse, ContractType, Jurisdiction
+from shared.database import get_db_session, Contract
 
 class ContractService:
     """Main contract service handling all contract operations"""
@@ -84,6 +85,17 @@ class ContractService:
                 "generation_timestamp": datetime.now().isoformat()
             }
             
+            session = get_db_session()
+            contract = Contract(
+                id=str(uuid.uuid4()),
+                collaboration_id=deal_terms.get("collaboration_id"),
+                contract_text=contract_data["contract_text"],
+                terms=deal_terms,
+                status="draft"
+            )
+            session.add(contract)
+            session.commit()
+            session.close()
             return contract_data
             
         except Exception as e:

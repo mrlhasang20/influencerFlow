@@ -1,18 +1,23 @@
+import sys
+import os
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import asyncio
 from typing import Dict, List, Any
 import uvicorn
+
+# Add the parent directory to Python path BEFORE any shared imports
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
+# Now we can import from shared
+from shared.config import settings
+
+# Then import local modules
 from routers.ai_router import router as ai_router
 from routers.campaign_router import router as campaign_router
 from middleware.cors_middleware import setup_cors
 from services.orchestrator_service import OrchestratorService
-import sys
-import os
-
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from shared.config import settings
 
 app = FastAPI(
     title="InfluencerFlow API Gateway",

@@ -4,6 +4,7 @@ from typing import List, Optional
 import uvicorn
 import time
 from contextlib import asynccontextmanager
+from sqlalchemy.orm import Session
 
 from services.recommendation_service import CreatorRecommendationService
 from services.search_service import CreatorSearchService
@@ -15,6 +16,7 @@ from schemas.creator_schemas import (
 from shared.config import settings, DEMO_CREATORS
 from shared.utils import Timer, generate_id
 from shared.redis_client import redis_client
+from shared.database import get_db, Creator as CreatorORM
 
 # Global service instances
 recommendation_service = CreatorRecommendationService()
@@ -87,14 +89,16 @@ async def search_creators(request: CreatorSearchRequest):
 async def advanced_search(
     query: str,
     filters: Optional[SearchFilters] = None,
-    limit: int = Query(default=10, ge=1, le=50)
+    limit: int = Query(default=10, ge=1, le=50),
+    db: Session = Depends(get_db)
 ):
     """Advanced search with comprehensive filtering"""
     try:
         result = await search_service.advanced_search(
             query=query,
             filters=filters,
-            limit=limit
+            limit=limit,
+            db=db
         )
         return result
     except Exception as e:
@@ -223,36 +227,31 @@ async def get_statistics():
         raise HTTPException(status_code=500, detail=f"Statistics failed: {str(e)}")
 
 @app.get("/creators/{creator_id}", response_model=CreatorRecommendation)
-async def get_creator_details(creator_id: str):
-    """Get detailed information about a specific creator"""
+async def get_creator_details(creator_id: str, db: Session = Depends(get_db)):
     try:
-        creator_data = DEMO_CREATORS.get(creator_id)
-        if not creator_data:
+        creator = db.query(CreatorORM).filter(CreatorORM.id == creator_id).first()
+        if not creator:
             raise HTTPException(status_code=404, detail="Creator not found")
-        
-        # Convert to recommendation format
-        from ..shared.utils import calculate_creator_score
-        
         recommendation = CreatorRecommendation(
-            creator_id=creator_id,
-            name=creator_data["name"],
-            handle=creator_data.get("handle"),
-            platform=creator_data["platform"],
-            followers=creator_data["followers"],
-            engagement_rate=creator_data["engagement_rate"],
-            categories=creator_data["categories"],
-            demographics=creator_data.get("demographics"),
-            content_style=creator_data.get("content_style"),
-            location=creator_data.get("location"),
-            collaboration_rate=creator_data.get("collaboration_rate"),
-            response_rate=creator_data.get("response_rate"),
-            match_score=100.0,  # Perfect match with itself
+            creator_id=creator.id,
+            name=creator.name,
+            handle=creator.handle,
+            platform=creator.platform,
+            followers=creator.followers,
+            engagement_rate=creator.engagement_rate,
+            categories=creator.categories,
+            demographics=creator.demographics,
+            content_style=creator.content_style,
+            location=creator.location,
+            collaboration_rate=creator.collaboration_rate,
+            response_rate=creator.response_rate,
+            match_score=100.0,
             creator_score=calculate_creator_score(
-                creator_data.get("engagement_rate", 0),
-                creator_data.get("followers", 0),
-                creator_data.get("response_rate", 50)
+                creator.engagement_rate,
+                creator.followers,
+                creator.response_rate
             ),
-            language=creator_data.get("language", "English")
+            language=creator.language
         )
         return recommendation
     except HTTPException:

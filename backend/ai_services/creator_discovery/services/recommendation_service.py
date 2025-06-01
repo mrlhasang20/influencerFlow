@@ -15,39 +15,74 @@ from schemas.creator_schemas import (
 from shared.config import DEMO_CREATORS
 from shared.utils import Timer, calculate_creator_score, categorize_follower_count
 from shared.redis_client import redis_client
+from shared.database import Creator, get_db_session
 
 class CreatorRecommendationService:
     def __init__(self):
         self.search_engine = SemanticSearchEngine()
         self.vector_db = CreatorVectorDB()
-        self.creators_data = DEMO_CREATORS
         self._initialized = False
     
+    def _get_creators_data(self):
+        """Get creators from the real database"""
+        session = get_db_session()
+        try:
+            creators = session.query(Creator).all()
+            # Convert to dictionary format that the service expects
+            creators_data = {}
+            for creator in creators:
+                creators_data[creator.id] = {
+                    "id": creator.id,
+                    "name": creator.name,
+                    "handle": creator.handle,
+                    "platform": creator.platform,
+                    "followers": creator.followers,
+                    "engagement_rate": creator.engagement_rate,
+                    "categories": creator.categories,
+                    "demographics": creator.demographics,
+                    "content_style": creator.content_style,
+                    "language": creator.language,
+                    "location": creator.location,
+                    "collaboration_rate": creator.collaboration_rate,
+                    "response_rate": creator.response_rate
+                }
+            return creators_data
+        finally:
+            session.close()
+    
     async def initialize(self):
-        """Initialize the service with creator embeddings"""
+        """Initialize the service with creator embeddings from database"""
         if self._initialized:
             return
         
         try:
             print("🚀 Initializing Creator Recommendation Service...")
             
-            # Index all demo creators for faster searching
-            await self.vector_db.batch_index_creators(self.creators_data)
+            # Get creators from database instead of demo data
+            creators_data = self._get_creators_data()
+            
+            # Index all creators for faster searching
+            await self.vector_db.batch_index_creators(creators_data)
             
             self._initialized = True
             print("✅ Creator Recommendation Service initialized")
             
         except Exception as e:
             print(f"❌ Failed to initialize service: {e}")
+
+    def _get_creators_from_db(self):
+        session = get_db_session()
+        creators = session.query(Creator).all()
+        session.close()
+        return [c.__dict__ for c in creators]
     
     async def search_creators(self, request: CreatorSearchRequest) -> CreatorSearchResponse:
         """Search for creators using AI-powered semantic search"""
+        await self.initialize()
+        creators_data = self._get_creators_from_db()
         start_time = time.time()
         
         try:
-            # Ensure service is initialized
-            await self.initialize()
-            
             with Timer(f"Creator search for query: '{request.query}'"):
                 # Convert filters to dict if provided
                 filters = None
@@ -57,7 +92,7 @@ class CreatorRecommendationService:
                 # Perform semantic search
                 search_results = await self.search_engine.search_creators(
                     query=request.query,
-                    creators=self.creators_data,
+                    creators=creators_data,
                     top_k=request.limit,
                     filters=filters,
                     similarity_threshold=0.2  # Lower threshold for demo
@@ -113,14 +148,14 @@ class CreatorRecommendationService:
             await self.initialize()
             
             # Get reference creator data
-            reference_creator_data = self.creators_data.get(request.creator_id)
+            reference_creator_data = self._get_creators_data().get(request.creator_id)
             if not reference_creator_data:
                 raise ValueError(f"Creator {request.creator_id} not found")
             
             # Get similar creators using search engine
             similar_results = await self.search_engine.get_recommendations(
                 creator_id=request.creator_id,
-                creators=self.creators_data,
+                creators=self._get_creators_data(),
                 count=request.count
             )
             
@@ -202,7 +237,7 @@ class CreatorRecommendationService:
         try:
             # Filter creators by category
             category_creators = {}
-            for creator_id, creator_data in self.creators_data.items():
+            for creator_id, creator_data in self._get_creators_data().items():
                 if (category.lower() in [cat.lower() for cat in creator_data.get("categories", [])] and
                     creator_data.get("followers", 0) >= min_followers):
                     category_creators[creator_id] = creator_data
@@ -255,7 +290,7 @@ class CreatorRecommendationService:
             # Simple trending algorithm based on engagement rate and follower count
             creator_scores = []
             
-            for creator_id, creator_data in self.creators_data.items():
+            for creator_id, creator_data in self._get_creators_data().items():
                 # Calculate trending score
                 engagement = creator_data.get("engagement_rate", 0)
                 followers = creator_data.get("followers", 0)
@@ -309,7 +344,7 @@ class CreatorRecommendationService:
         """Get statistics about the creator database"""
         try:
             stats = {
-                "total_creators": len(self.creators_data),
+                "total_creators": len(self._get_creators_data()),
                 "platforms": {},
                 "categories": {},
                 "total_followers": 0,
@@ -320,7 +355,7 @@ class CreatorRecommendationService:
             engagement_rates = []
             response_rates = []
             
-            for creator_data in self.creators_data.values():
+            for creator_data in self._get_creators_data().values():
                 # Platform distribution
                 platform = creator_data.get("platform", "Unknown")
                 stats["platforms"][platform] = stats["platforms"].get(platform, 0) + 1

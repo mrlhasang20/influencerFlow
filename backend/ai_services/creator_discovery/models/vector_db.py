@@ -11,6 +11,7 @@ from shared.vector_store import vector_store
 from shared.redis_client import redis_client
 from shared.utils import generate_id
 from models.embeddings import GeminiEmbeddingEngine
+from shared.database import get_db_session, Creator
 
 class CreatorVectorDB:
     def __init__(self):
@@ -18,8 +19,25 @@ class CreatorVectorDB:
         self.embedding_engine = GeminiEmbeddingEngine()
         self.namespace = "creators"
     
+    async def _update_creator_embedding_in_db(self, creator_id: str, embedding: List[float]):
+        """Update the embedding in the PostgreSQL database"""
+        session = get_db_session()
+        try:
+            creator = session.query(Creator).filter(Creator.id == creator_id).first()
+            if creator:
+                creator.embedding = json.dumps(embedding)  # Convert to JSON for storage
+                session.commit()
+                print(f"✅ Updated embedding in database for creator {creator_id}")
+            else:
+                print(f"❌ Creator {creator_id} not found in database")
+        except Exception as e:
+            print(f"Error updating creator embedding in database: {e}")
+            session.rollback()
+        finally:
+            session.close()
+
     async def index_creator(self, creator_id: str, creator_data: Dict) -> bool:
-        """Index a creator in the vector database"""
+        """Index a creator in the vector database and update PostgreSQL"""
         try:
             # Generate embedding for creator
             embedding = await self.embedding_engine.generate_creator_embedding(creator_data)
@@ -37,11 +55,13 @@ class CreatorVectorDB:
                 "followers": creator_data.get('followers', 0),
                 "engagement_rate": creator_data.get('engagement_rate', 0.0),
                 "location": creator_data.get('location', ''),
-                "indexed_at": "2024-01-01"  # You'd use actual timestamp
+                "indexed_at": "2024-01-01"
             }
             
             success = self.vector_store.store_vector(vector_id, embedding, metadata)
             if success:
+                # Also update the PostgreSQL database
+                await self._update_creator_embedding_in_db(creator_id, embedding)
                 print(f"✅ Indexed creator {creator_id}")
             else:
                 print(f"❌ Failed to index creator {creator_id}")
@@ -61,7 +81,7 @@ class CreatorVectorDB:
             print(f"🔄 Generating embeddings for {len(creators)} creators...")
             creator_embeddings = await self.embedding_engine.batch_generate_creator_embeddings(creators)
             
-            # Store all vectors
+            # Store all vectors and update database
             vectors_to_store = {}
             for creator_id, creator_data in creators.items():
                 if creator_id in creator_embeddings:
@@ -81,6 +101,8 @@ class CreatorVectorDB:
                         "embedding": creator_embeddings[creator_id],
                         "metadata": metadata
                     }
+                    # Update PostgreSQL database
+                    await self._update_creator_embedding_in_db(creator_id, creator_embeddings[creator_id])
                     results[creator_id] = True
                 else:
                     results[creator_id] = False

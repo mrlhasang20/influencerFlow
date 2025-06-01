@@ -4,6 +4,7 @@ from typing import List, Dict, Tuple, Optional, Any
 from .embeddings import GeminiEmbeddingEngine
 import sys
 from pathlib import Path
+import json
 
 # Add the parent directory to Python path
 sys.path.append(str(Path(__file__).parent.parent.parent))
@@ -67,23 +68,31 @@ class SemanticSearchEngine:
             return self._fallback_search(query, creators, top_k, filters)
     
     async def _get_creator_embeddings(self, creators: Dict[str, Dict]) -> Dict[str, List[float]]:
-        """Get embeddings for all creators (from cache or generate)"""
+        """Get embeddings for all creators (from database or generate if missing)"""
         embeddings = {}
         creators_to_embed = {}
         
-        # Check cache for existing embeddings
+        # First try to get embeddings from the creator data
         for creator_id, creator_data in creators.items():
-            creator_text = self.embedding_engine._create_creator_text(creator_data)
-            cached_embedding = await redis_client.get_cached_embedding_async(creator_text)
-            
-            if cached_embedding:
-                embeddings[creator_id] = cached_embedding
+            if creator_data.get('embedding'):
+                try:
+                    # Parse the embedding from string if needed
+                    embedding = creator_data['embedding']
+                    if isinstance(embedding, str):
+                        embedding = json.loads(embedding)
+                    embeddings[creator_id] = embedding
+                    print(f"✅ Using existing embedding for creator {creator_id}")
+                except Exception as e:
+                    print(f"❌ Error parsing embedding for creator {creator_id}: {e}")
+                    creators_to_embed[creator_id] = creator_data
             else:
                 creators_to_embed[creator_id] = creator_data
         
-        # Generate embeddings for creators not in cache
+        print(f"Found {len(embeddings)} existing embeddings")
+        
+        # Generate embeddings only for creators that don't have them
         if creators_to_embed:
-            print(f"🔄 Generating embeddings for {len(creators_to_embed)} creators")
+            print(f"🔄 Generating embeddings for {len(creators_to_embed)} creators (missing embeddings)")
             new_embeddings = await self.embedding_engine.batch_generate_creator_embeddings(
                 creators_to_embed
             )

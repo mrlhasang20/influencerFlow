@@ -5,13 +5,15 @@ import asyncio
 from typing import Dict, Any
 from pathlib import Path
 import uuid
+from sqlalchemy.orm import Session
+from shared.database import get_db, Campaign as CampaignORM
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from shared.config import settings
 
 class OrchestratorService:
-    async def create_complete_campaign(self, campaign_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def create_complete_campaign(self, campaign_data: Dict[str, Any], db: Session = None) -> Dict[str, Any]:
         """Orchestrate full campaign creation workflow"""
         try:
             async with httpx.AsyncClient() as client:
@@ -61,6 +63,21 @@ class OrchestratorService:
                 
                 # Step 3: Create Campaign Records
                 campaign_id = f"camp_{uuid.uuid4().hex[:8]}"
+                new_campaign = CampaignORM(
+                    id=campaign_id,
+                    brand_name=campaign_data["brand_name"],
+                    campaign_name=campaign_data["campaign_name"],
+                    description=campaign_data.get("description", ""),
+                    target_audience=campaign_data["target_audience"],
+                    budget_range=campaign_data["budget_range"],
+                    timeline=campaign_data["timeline"],
+                    deliverables=campaign_data.get("deliverables", []),
+                    status="draft",
+                    created_by=campaign_data.get("created_by", "system")
+                )
+                db.add(new_campaign)
+                db.commit()
+                db.refresh(new_campaign)
                 
                 outreach_messages = []
                 for r in outreach_responses:
@@ -68,11 +85,7 @@ class OrchestratorService:
                         outreach_messages.append({"error": str(r)})
                     elif hasattr(r, "status_code") and r.status_code == 200:
                         try:
-                            # Try await r.json(), fallback to r.json() if TypeError
-                            try:
-                                data = await r.json()
-                            except TypeError:
-                                data = r.json()
+                            data = await r.json()
                             outreach_messages.append(data)
                         except Exception as e:
                             outreach_messages.append({"error": f"Failed to parse JSON: {str(e)}", "raw": getattr(r, "text", str(r))})
@@ -83,8 +96,8 @@ class OrchestratorService:
                         })
                 
                 result = {
-                    "campaign_id": campaign_id,
-                    "status": "created",
+                    "campaign_id": new_campaign.id,
+                    "status": new_campaign.status,
                     "creators_discovered": len(creators),
                     "outreach_messages": outreach_messages,
                     "next_steps": ["negotiation", "contract_signing"]
