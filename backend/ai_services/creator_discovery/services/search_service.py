@@ -42,6 +42,19 @@ class CreatorSearchService:
                 
                 print(f"Found {len(creators_list)} creators in database")
                 
+                # Early check for empty database
+                if not creators_list:
+                    return CreatorSearchResponse(
+                        results=[],
+                        total_found=0,
+                        query=query,
+                        search_time_ms=0,
+                        used_cache=False,
+                        filters_applied=None,
+                        error_message="No creators found in the database"
+                    )
+                
+                # Convert creators to dictionary format
                 for creator in creators_list:
                     # Convert embedding from string to list if it exists
                     embedding = None
@@ -108,6 +121,19 @@ class CreatorSearchService:
                     similarity_threshold=0.2
                 )
                 
+                # If no results, analyze why
+                if not search_results:
+                    error_message = self._analyze_no_results(query, filter_dict, creators)
+                    return CreatorSearchResponse(
+                        results=[],
+                        total_found=0,
+                        query=query,
+                        search_time_ms=(time.time() - start_time) * 1000,
+                        used_cache=False,
+                        filters_applied=filter_dict,
+                        error_message=error_message
+                    )
+                
                 # Convert to response format
                 recommendations = []
                 for result in search_results:
@@ -149,8 +175,51 @@ class CreatorSearchService:
                 results=[],
                 total_found=0,
                 query=query,
-                search_time_ms=(time.time() - start_time) * 1000
+                search_time_ms=(time.time() - start_time) * 1000,
+                error_message=f"Search failed: {str(e)}"
             )
+    
+    def _analyze_no_results(self, query: str, filters: Dict, creators: Dict) -> str:
+        """Analyze why no results were found and return a helpful message"""
+        try:
+            # Check for location filter
+            if location := filters.get('location'):
+                available_locations = set()
+                for creator in creators.values():
+                    if creator_location := creator.get('location'):
+                        available_locations.add(creator_location.lower())
+                
+                if location.lower() not in available_locations:
+                    return f"No creators found from {location}. Available locations are: {', '.join(sorted(available_locations))}"
+            
+            # Check for category filter
+            if categories := filters.get('categories'):
+                available_categories = set()
+                for creator in creators.values():
+                    available_categories.update(c.lower() for c in creator.get('categories', []))
+                
+                missing_categories = [c for c in categories if c.lower() not in available_categories]
+                if missing_categories:
+                    return f"No creators found in categories: {', '.join(missing_categories)}. Available categories are: {', '.join(sorted(available_categories))}"
+            
+            # Check for follower count filter
+            if min_followers := filters.get('min_followers'):
+                max_available = max(c.get('followers', 0) for c in creators.values())
+                if min_followers > max_available:
+                    return f"No creators found with {min_followers:,} or more followers. Maximum available is {max_available:,} followers"
+            
+            # Check for engagement rate filter
+            if min_rate := filters.get('min_engagement_rate'):
+                max_rate = max(c.get('engagement_rate', 0) for c in creators.values())
+                if min_rate > max_rate:
+                    return f"No creators found with {min_rate}% or higher engagement rate. Maximum available is {max_rate}%"
+            
+            # Generic message if no specific reason found
+            return "No creators found matching your search criteria. Try adjusting your filters or search terms."
+            
+        except Exception as e:
+            print(f"Error analyzing no results: {e}")
+            return "No creators found matching your search criteria"
     
     async def batch_search(self, request: BatchSearchRequest) -> BatchSearchResponse:
         """Perform batch search for multiple queries"""

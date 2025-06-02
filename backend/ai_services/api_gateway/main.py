@@ -18,6 +18,7 @@ from routers.ai_router import router as ai_router
 from routers.campaign_router import router as campaign_router
 from middleware.cors_middleware import setup_cors
 from services.orchestrator_service import OrchestratorService
+from routers.creator_router import router as creator_router
 
 app = FastAPI(
     title="InfluencerFlow API Gateway",
@@ -28,12 +29,21 @@ app = FastAPI(
 # Setup CORS
 setup_cors(app)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # Your Next.js frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Initialize orchestrator
 orchestrator = OrchestratorService()
 
 # Include routers with correct prefixes
 app.include_router(ai_router, prefix="/api/v1/ai", tags=["AI Services"])
 app.include_router(campaign_router, prefix="/api/v1/campaigns", tags=["Campaigns"])
+app.include_router(creator_router, prefix="/api/v1/creators", tags=["Creators"])
 
 # Service URLs mapping
 SERVICES = {

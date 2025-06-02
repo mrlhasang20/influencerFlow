@@ -2,7 +2,7 @@
 
 import os
 from pydantic_settings import BaseSettings
-from typing import Optional
+from typing import Optional, List
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -10,44 +10,48 @@ from pathlib import Path
 env_path = Path(__file__).parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
+
 class Settings(BaseSettings):
     # Google Gemini API Configuration
     google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
+    gemini_api_key: str = os.getenv("GOOGLE_API_KEY", "")  # Alias for compatibility
+    database_url: str = os.getenv("DATABASE_URL", "")
+    demo_mode: bool = True
+    vector_dimension: int = 768
+    vector_collection_name: str = "creator_embeddings"
+    default_similarity_threshold: float = 0.5
+    max_search_results: int = 100
+    max_concurrent_requests: int = 10
+    request_timeout: int = 30
+    rate_limit_per_minute: int = 60
+    allowed_origins: List[str] = ["http://localhost:3000", "https://yourdomain.com"]
+    default_model: str = "gemini-pro"
+    embedding_model: str = "text-embedding-004"
+    max_tokens: int = 1000
+    temperature: float = 0.7
+
+    # Original settings
     gemini_model: str = "gemini-1.5-flash"
     gemini_embedding_model: str = "text-embedding-004"
-    
-    # Database Configuration
-    postgres_url: str = os.getenv("DATABASE_URL")
-    redis_url: str = os.getenv("REDIS_URL")
-    
-    # Service Configuration
+    postgres_url: str = os.getenv("DATABASE_URL", "")
+    redis_url: str = os.getenv("REDIS_URL", "")
     creator_discovery_port: int = 8001
     ai_communication_port: int = 8002
     contract_automation_port: int = 8003
     analytics_engine_port: int = 8004
     api_gateway_port: int = 8000
-    
-    # Environment
     environment: str = os.getenv("ENVIRONMENT", "development")
     debug: bool = os.getenv("DEBUG", "true").lower() == "true"
-    
-    # Security
     secret_key: str = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
-    
-    # Rate Limiting
     rate_limit_calls: int = 100
     rate_limit_period: int = 60
-    
-    # Cache Configuration
-    cache_ttl: int = 3600  # 1 hour
-    embedding_cache_ttl: int = 86400  # 24 hours
-    
-    # External APIs
+    cache_ttl: int = 3600
+    embedding_cache_ttl: int = 86400
     deepl_api_key: Optional[str] = os.getenv("DEEPL_API_KEY")
     elevenlabs_api_key: Optional[str] = os.getenv("ELEVENLABS_API_KEY")
-    
+
     class Config:
         env_file = ".env"
         case_sensitive = False

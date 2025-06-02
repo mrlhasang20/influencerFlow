@@ -46,6 +46,7 @@ class CreatorSearchResponse(BaseModel):
     search_time_ms: Optional[float] = None
     used_cache: bool = False
     filters_applied: Optional[Dict[str, Any]] = None
+    error_message: Optional[str] = None
 
 class CreatorDetailRequest(BaseModel):
     creator_id: str = Field(..., min_length=1)

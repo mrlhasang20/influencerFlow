@@ -2,109 +2,178 @@
 import sys
 import httpx
 import asyncio
-from typing import Dict, Any
+from typing import Dict, Any, List
 from pathlib import Path
 import uuid
 from sqlalchemy.orm import Session
-from shared.database import get_db, Campaign as CampaignORM
+from shared.database import get_db, Campaign as CampaignORM, Creator
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from shared.config import settings
 
 class OrchestratorService:
-    async def create_complete_campaign(self, campaign_data: Dict[str, Any], db: Session = None) -> Dict[str, Any]:
-        """Orchestrate full campaign creation workflow"""
+    async def create_complete_campaign(self, campaign_data: Dict[str, Any], db: Session) -> Dict[str, Any]:
+        """
+        Orchestrate the complete campaign creation flow:
+        1. Create campaign
+        2. Find top creators
+        3. Generate outreach messages
+        4. Create contracts
+        5. Set up payment milestones
+        """
         try:
-            async with httpx.AsyncClient() as client:
-                # Step 1: Creator Discovery
-                discovery_response = await client.post(
-                    f"http://localhost:{settings.creator_discovery_port}/search",
-                    json={"query": campaign_data["target_audience"], "limit": 10},
-                    timeout=30.0
-                )
-                discovery_response.raise_for_status()
-                
-                print("Discovery response:", discovery_response.json())
-                
-                creators_response = discovery_response.json()
-                if isinstance(creators_response, dict) and "results" in creators_response:
-                    creators = creators_response["results"]
-                elif isinstance(creators_response, list):
-                    creators = creators_response
-                else:
-                    raise Exception(f"Creator discovery did not return a list: {creators_response}")
-                
-                # Step 2: Generate Outreach Messages
-                outreach_tasks = []
-                for creator in creators[:3]:  # Top 3 creators
-                    print("CREATOR OBJECT:", creator)
-                    print("Outreach payload:", {
-                        "creator_profile": creator,
-                        "campaign_brief": campaign_data
-                    })
-                    outreach_tasks.append(
-                        client.post(
-                            f"http://localhost:{settings.ai_communication_port}/generate-outreach",
-                            json={
-                                "creator_profile": creator,
-                                "campaign_brief": campaign_data
-                            },
-                            timeout=30.0
-                        )
-                    )
-                outreach_responses = await asyncio.gather(*outreach_tasks, return_exceptions=True)
-                
-                print("Outreach responses:", outreach_responses)
-                for idx, r in enumerate(outreach_responses):
-                    print(f"Response {idx}: type={type(r)}, status={getattr(r, 'status_code', None)}")
-                    if hasattr(r, "text"):
-                        print(f"Response {idx} text: {r.text}")
-                
-                # Step 3: Create Campaign Records
-                campaign_id = f"camp_{uuid.uuid4().hex[:8]}"
-                new_campaign = CampaignORM(
-                    id=campaign_id,
-                    brand_name=campaign_data["brand_name"],
-                    campaign_name=campaign_data["campaign_name"],
-                    description=campaign_data.get("description", ""),
-                    target_audience=campaign_data["target_audience"],
-                    budget_range=campaign_data["budget_range"],
-                    timeline=campaign_data["timeline"],
-                    deliverables=campaign_data.get("deliverables", []),
-                    status="draft",
-                    created_by=campaign_data.get("created_by", "system")
-                )
-                db.add(new_campaign)
-                db.commit()
-                db.refresh(new_campaign)
-                
-                outreach_messages = []
-                for r in outreach_responses:
-                    if isinstance(r, Exception):
-                        outreach_messages.append({"error": str(r)})
-                    elif hasattr(r, "status_code") and r.status_code == 200:
-                        try:
-                            data = await r.json()
-                            outreach_messages.append(data)
-                        except Exception as e:
-                            outreach_messages.append({"error": f"Failed to parse JSON: {str(e)}", "raw": getattr(r, "text", str(r))})
-                    else:
-                        outreach_messages.append({
-                            "error": f"Outreach service returned status {getattr(r, 'status_code', 'unknown')}",
-                            "text": getattr(r, 'text', str(r))
-                        })
-                
-                result = {
-                    "campaign_id": new_campaign.id,
-                    "status": new_campaign.status,
-                    "creators_discovered": len(creators),
-                    "outreach_messages": outreach_messages,
-                    "next_steps": ["negotiation", "contract_signing"]
-                }
-                print("FINAL RESULT:", result)
-                return result
-        except httpx.HTTPError as e:
-            raise Exception(f"Service communication error: {str(e)}")
+            # 1. Create campaign record
+            campaign = CampaignORM(**campaign_data)
+            db.add(campaign)
+            db.commit()
+            db.refresh(campaign)
+            
+            # 2. Find top creators based on campaign requirements
+            creators = await self._find_top_creators(campaign_data)
+            
+            # 3. Generate personalized outreach for each creator
+            outreach_messages = await self._generate_outreach_messages(campaign, creators)
+            
+            # 4. Create draft contracts
+            contracts = await self._create_draft_contracts(campaign, creators)
+            
+            # 5. Set up payment milestones
+            payment_plans = await self._setup_payment_milestones(campaign, creators)
+            
+            return {
+                "campaign_id": campaign.id,
+                "status": "created",
+                "recommended_creators": creators,
+                "outreach_messages": outreach_messages,
+                "draft_contracts": contracts,
+                "payment_plans": payment_plans
+            }
+            
         except Exception as e:
-            raise Exception(f"Campaign creation failed: {str(e)}")
+            db.rollback()
+            raise Exception(f"Failed to create campaign: {str(e)}")
+    
+    async def _find_top_creators(self, campaign_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Find top 3 creators matching campaign requirements"""
+        # For demo, return mock data
+        return [
+            {
+                "id": "creator_1",
+                "name": "Top Fashion Influencer",
+                "platform": "Instagram",
+                "followers": 1000000,
+                "engagement_rate": 3.5,
+                "match_score": 0.95
+            },
+            {
+                "id": "creator_2",
+                "name": "Lifestyle Creator",
+                "platform": "YouTube",
+                "followers": 500000,
+                "engagement_rate": 4.2,
+                "match_score": 0.92
+            },
+            {
+                "id": "creator_3",
+                "name": "Beauty Expert",
+                "platform": "Instagram",
+                "followers": 750000,
+                "engagement_rate": 3.8,
+                "match_score": 0.89
+            }
+        ]
+    
+    async def _generate_outreach_messages(self, campaign: CampaignORM, creators: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Generate personalized outreach messages for each creator"""
+        messages = []
+        for creator in creators:
+            message = {
+                "creator_id": creator["id"],
+                "subject": f"Collaboration Opportunity: {campaign.campaign_name}",
+                "message": f"Hi {creator['name']},\n\nWe love your content and would like to collaborate with you on our {campaign.campaign_name} campaign...",
+                "status": "draft"
+            }
+            messages.append(message)
+        return messages
+    
+    async def _create_draft_contracts(self, campaign: CampaignORM, creators: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Create draft contracts for each creator"""
+        contracts = []
+        for creator in creators:
+            contract = {
+                "creator_id": creator["id"],
+                "campaign_id": campaign.id,
+                "terms": {
+                    "deliverables": campaign.content_types,
+                    "timeline": campaign.timeline,
+                    "compensation": f"Based on {campaign.budget_range}"
+                },
+                "status": "draft"
+            }
+            contracts.append(contract)
+        return contracts
+    
+    async def _setup_payment_milestones(self, campaign: CampaignORM, creators: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Set up payment milestones for each creator"""
+        payment_plans = []
+        for creator in creators:
+            plan = {
+                "creator_id": creator["id"],
+                "campaign_id": campaign.id,
+                "milestones": [
+                    {"percentage": 30, "description": "Upon contract signing"},
+                    {"percentage": 40, "description": "Upon content submission"},
+                    {"percentage": 30, "description": "Upon campaign completion"}
+                ],
+                "status": "draft"
+            }
+            payment_plans.append(plan)
+        return payment_plans
+
+    async def get_campaign_workflow_status(self, campaign_id: str) -> Dict[str, Any]:
+        """Get the current status of the campaign workflow"""
+        # For demo purposes, return mock data
+        return {
+            "recommended_creators": [
+                {
+                    "id": "creator_1",
+                    "name": "Fashion Influencer",
+                    "platform": "Instagram",
+                    "followers": 1000000,
+                    "engagement_rate": 3.5,
+                    "match_score": 0.95
+                },
+                {
+                    "id": "creator_2",
+                    "name": "Lifestyle Creator",
+                    "platform": "YouTube",
+                    "followers": 500000,
+                    "engagement_rate": 4.2,
+                    "match_score": 0.92
+                }
+            ],
+            "outreach_messages": [
+                {
+                    "creator_id": "creator_1",
+                    "subject": "Collaboration Opportunity",
+                    "status": "sent"
+                },
+                {
+                    "creator_id": "creator_2",
+                    "subject": "Campaign Partnership",
+                    "status": "draft"
+                }
+            ],
+            "draft_contracts": [
+                {
+                    "creator_id": "creator_1",
+                    "status": "negotiating",
+                    "payment_milestones": [
+                        {"percentage": 30, "description": "Upon signing"},
+                        {"percentage": 40, "description": "Content delivery"},
+                        {"percentage": 30, "description": "Campaign completion"}
+                    ]
+                }
+            ]
+        }

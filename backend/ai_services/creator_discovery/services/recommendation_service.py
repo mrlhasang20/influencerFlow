@@ -5,6 +5,10 @@ from models.search_engine import SemanticSearchEngine
 from models.vector_db import CreatorVectorDB
 import sys
 from pathlib import Path
+from sqlalchemy import String, or_, cast, and_, func, ARRAY, JSON
+import traceback
+import json
+import re
 
 # Add the parent directory to Python path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -22,6 +26,7 @@ class CreatorRecommendationService:
         self.search_engine = SemanticSearchEngine()
         self.vector_db = CreatorVectorDB()
         self._initialized = False
+        self._embeddings_loaded = False
     
     def _get_creators_data(self):
         """Get creators from the real database"""
@@ -31,44 +36,69 @@ class CreatorRecommendationService:
             # Convert to dictionary format that the service expects
             creators_data = {}
             for creator in creators:
-                creators_data[creator.id] = {
-                    "id": creator.id,
-                    "name": creator.name,
-                    "handle": creator.handle,
-                    "platform": creator.platform,
-                    "followers": creator.followers,
-                    "engagement_rate": creator.engagement_rate,
-                    "categories": creator.categories,
-                    "demographics": creator.demographics,
-                    "content_style": creator.content_style,
-                    "language": creator.language,
-                    "location": creator.location,
-                    "collaboration_rate": creator.collaboration_rate,
-                    "response_rate": creator.response_rate
-                }
+                # Only include creators that don't have embeddings
+                if not creator.embedding:
+                    creators_data[creator.id] = {
+                        "id": creator.id,
+                        "name": creator.name,
+                        "handle": creator.handle,
+                        "platform": creator.platform,
+                        "followers": creator.followers,
+                        "engagement_rate": creator.engagement_rate,
+                        "categories": creator.categories,
+                        "demographics": creator.demographics,
+                        "content_style": creator.content_style,
+                        "language": creator.language,
+                        "location": creator.location,
+                        "collaboration_rate": creator.collaboration_rate,
+                        "response_rate": creator.response_rate
+                    }
             return creators_data
         finally:
             session.close()
     
+    def _check_embeddings_exist(self):
+        """Check if embeddings exist in the database"""
+        session = get_db_session()
+        try:
+            # Check if any creator doesn't have embeddings
+            missing_embeddings = session.query(Creator).filter(
+                Creator.embedding.is_(None)
+            ).count()
+            return missing_embeddings == 0
+        finally:
+            session.close()
+
     async def initialize(self):
         """Initialize the service with creator embeddings from database"""
         if self._initialized:
             return
         
         try:
-            print("🚀 Initializing Creator Recommendation Service...")
+            print("🚀 Starting Creator Recommendation Service...")
             
-            # Get creators from database instead of demo data
+            # Check if all creators have embeddings
+            if self._check_embeddings_exist():
+                print("✅ All creators already have embeddings, skipping generation")
+                self._initialized = True
+                return
+            
+            # Get only creators without embeddings
             creators_data = self._get_creators_data()
             
-            # Index all creators for faster searching
-            await self.vector_db.batch_index_creators(creators_data)
+            if creators_data:
+                print(f"🔄 Generating embeddings for {len(creators_data)} creators without embeddings...")
+                # Index only creators without embeddings
+                await self.vector_db.batch_index_creators(creators_data)
+            else:
+                print("✅ No new embeddings needed")
             
             self._initialized = True
             print("✅ Creator Recommendation Service initialized")
             
         except Exception as e:
             print(f"❌ Failed to initialize service: {e}")
+            raise
 
     def _get_creators_from_db(self):
         session = get_db_session()
@@ -78,68 +108,103 @@ class CreatorRecommendationService:
     
     async def search_creators(self, request: CreatorSearchRequest) -> CreatorSearchResponse:
         """Search for creators using AI-powered semantic search"""
-        await self.initialize()
-        creators_data = self._get_creators_from_db()
+        if not self._initialized:
+            await self.initialize()
+        
         start_time = time.time()
         
         try:
             with Timer(f"Creator search for query: '{request.query}'"):
-                # Convert filters to dict if provided
-                filters = None
-                if request.filters:
-                    filters = request.filters
+                # Get all creators from database first
+                session = get_db_session()
+                creators = session.query(Creator).all()
                 
-                # Perform semantic search
+                # Convert to dictionary format for semantic search
+                creators_dict = {}
+                for creator in creators:
+                    creators_dict[creator.id] = {
+                        "id": creator.id,
+                        "name": creator.name,
+                        "handle": creator.handle,
+                        "platform": creator.platform,
+                        "followers": creator.followers,
+                        "engagement_rate": creator.engagement_rate,
+                        "categories": creator.categories,
+                        "demographics": creator.demographics,
+                        "content_style": creator.content_style,
+                        "language": creator.language,
+                        "location": creator.location,
+                        "collaboration_rate": creator.collaboration_rate,
+                        "response_rate": creator.response_rate,
+                        "embedding": creator.embedding
+                    }
+                
+                # Prepare filters
+                search_filters = {}
+                if request.filters:
+                    if platform := request.filters.get('platform'):
+                        search_filters['platform'] = platform
+                    if min_followers := request.filters.get('min_followers'):
+                        search_filters['min_followers'] = min_followers
+                
+                # Use semantic search
                 search_results = await self.search_engine.search_creators(
-                    query=request.query,
-                    creators=creators_data,
-                    top_k=request.limit,
-                    filters=filters,
-                    similarity_threshold=0.2  # Lower threshold for demo
+                    query=request.query or "all creators",
+                    creators=creators_dict,
+                    top_k=50,  # Get more results
+                    filters=search_filters,
+                    similarity_threshold=0.3  # Adjust this threshold as needed
                 )
                 
-                # Convert to response format
+                # Convert results to recommendations
                 recommendations = []
                 for result in search_results:
                     recommendation = CreatorRecommendation(
-                        creator_id=result["creator_id"],
-                        name=result["name"],
-                        handle=result.get("handle"),
-                        platform=result["platform"],
-                        followers=result["followers"],
-                        engagement_rate=result["engagement_rate"],
-                        categories=result["categories"],
-                        demographics=result.get("demographics"),
-                        content_style=result.get("content_style"),
-                        location=result.get("location"),
-                        collaboration_rate=result.get("collaboration_rate"),
-                        response_rate=result.get("response_rate"),
-                        match_score=result["match_score"],
-                        creator_score=result.get("creator_score"),
-                        language=result.get("language", "English")
+                        creator_id=str(result['creator_id']),
+                        name=result['name'],
+                        handle=result['handle'],
+                        platform=result['platform'],
+                        followers=result['followers'],
+                        engagement_rate=result['engagement_rate'],
+                        categories=result['categories'],
+                        demographics=result['demographics'],
+                        content_style=result['content_style'],
+                        location=result['location'],
+                        collaboration_rate=result['collaboration_rate'],
+                        response_rate=result['response_rate'],
+                        match_score=result['match_score'],
+                        creator_score=result['creator_score'],
+                        language=result['language']
                     )
                     recommendations.append(recommendation)
                 
-                search_time = (time.time() - start_time) * 1000  # Convert to ms
+                search_time = (time.time() - start_time) * 1000
                 
-                return CreatorSearchResponse(
+                response = CreatorSearchResponse(
                     results=recommendations,
                     total_found=len(recommendations),
                     query=request.query,
                     search_time_ms=search_time,
-                    used_cache=False,  # Would be determined by cache hit
-                    filters_applied=filters
+                    used_cache=False,
+                    filters_applied=request.filters
                 )
                 
+                print(f"Search response: {len(recommendations)} results found")
+                return response
+                
         except Exception as e:
-            print(f"Search error: {e}")
-            # Return empty results on error
+            print(f"Search error: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return CreatorSearchResponse(
                 results=[],
                 total_found=0,
                 query=request.query,
-                search_time_ms=(time.time() - start_time) * 1000
+                search_time_ms=(time.time() - start_time) * 1000,
+                error=str(e)
             )
+        finally:
+            session.close()
     
     async def get_similar_creators(self, request: SimilarCreatorsRequest) -> SimilarCreatorsResponse:
         """Get creators similar to a reference creator"""

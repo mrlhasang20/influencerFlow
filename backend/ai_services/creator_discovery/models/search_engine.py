@@ -5,6 +5,7 @@ from .embeddings import GeminiEmbeddingEngine
 import sys
 from pathlib import Path
 import json
+import re
 
 # Add the parent directory to Python path
 sys.path.append(str(Path(__file__).parent.parent.parent))
@@ -152,60 +153,105 @@ class SemanticSearchEngine:
         
         return results
     
+    def _parse_natural_language_query(self, query: str) -> Tuple[str, Dict[str, Any]]:
+        """Parse natural language query to extract filters and clean query"""
+        filters = {}
+        clean_query = query.lower()
+        
+        # Extract location/country
+        location_patterns = [
+            r'from\s+(\w+)',
+            r'in\s+(\w+)',
+            r'(\w+)\s+influencers?'  # This will catch "nepal influencers"
+        ]
+        
+        for pattern in location_patterns:
+            if match := re.search(pattern, clean_query, re.IGNORECASE):
+                location = match.group(1)
+                if location not in ['show', 'me', 'the', 'all']:  # Skip common words
+                    filters['location'] = location
+                    clean_query = re.sub(pattern, '', clean_query).strip()
+                    break
+        
+        # ... rest of the parsing code ...
+        
+        return clean_query, filters
+    
     def _apply_filters(self, creator_data: Dict, filters: Dict) -> bool:
         """Apply filters to creator data"""
         try:
             # Platform filter
-            if filters.get('platform'):
-                if creator_data.get('platform', '').lower() != filters['platform'].lower():
+            if platform := filters.get('platform'):
+                if creator_data.get('platform', '').lower() != platform.lower():
                     return False
             
-            # Minimum followers filter
-            if filters.get('min_followers'):
-                if creator_data.get('followers', 0) < filters['min_followers']:
+            # Followers filters
+            if min_followers := filters.get('min_followers'):
+                if creator_data.get('followers', 0) < min_followers:
                     return False
             
-            # Maximum followers filter
-            if filters.get('max_followers'):
-                if creator_data.get('followers', 0) > filters['max_followers']:
+            if max_followers := filters.get('max_followers'):
+                if creator_data.get('followers', 0) > max_followers:
                     return False
             
-            # Minimum engagement rate filter
-            if filters.get('min_engagement_rate'):
-                if creator_data.get('engagement_rate', 0) < filters['min_engagement_rate']:
+            # Engagement rate filters
+            if min_rate := filters.get('min_engagement_rate'):
+                if creator_data.get('engagement_rate', 0) < min_rate:
                     return False
             
-            # Category filter
-            if filters.get('categories'):
-                creator_categories = set(creator_data.get('categories', []))
-                filter_categories = set(filters['categories'])
-                if not creator_categories.intersection(filter_categories):
+            if max_rate := filters.get('max_engagement_rate'):
+                if creator_data.get('engagement_rate', 0) > max_rate:
+                    return False
+            
+            # Categories filter
+            if filter_categories := filters.get('categories'):
+                creator_categories = set(c.lower() for c in creator_data.get('categories', []))
+                if not any(c.lower() in creator_categories for c in filter_categories):
                     return False
             
             # Location filter
-            if filters.get('location'):
+            if location := filters.get('location'):
                 creator_location = creator_data.get('location', '').lower()
-                if filters['location'].lower() not in creator_location:
-                    return False
-            
-            # Language filter
-            if filters.get('language'):
-                creator_language = creator_data.get('language', '').lower()
-                if filters['language'].lower() not in creator_language:
-                    return False
-            
-            # Age group filter (from demographics)
-            if filters.get('age_group'):
-                demographics = creator_data.get('demographics', {})
-                creator_age_group = demographics.get('age_group', '')
-                if filters['age_group'] not in creator_age_group:
+                # Check if location exists and matches (including partial matches)
+                if not creator_location or location.lower() not in creator_location.lower():
                     return False
             
             return True
             
         except Exception as e:
             print(f"Filter application error: {e}")
-            return True  # If filter fails, include the creator
+            return True
+    
+    def _analyze_no_results(self, query: str, filters: Dict, creators: Dict[str, Dict]) -> str:
+        """Analyze why no results were found and return a helpful message"""
+        try:
+            # Check for location filter
+            if location := filters.get('location'):
+                available_locations = set()
+                for creator in creators.values():
+                    if creator_location := creator.get('location'):
+                        available_locations.add(creator_location.lower())
+                
+                if not available_locations:
+                    return "No location information available for any creators"
+                
+                if location.lower() not in [loc.lower() for loc in available_locations]:
+                    locations_list = sorted(list(available_locations))
+                    # Only show up to 5 locations in the message
+                    display_locations = locations_list[:5]
+                    remaining = len(locations_list) - 5
+                    locations_text = ", ".join(display_locations)
+                    if remaining > 0:
+                        locations_text += f" and {remaining} more"
+                    return f"No creators found from {location}. Available locations include: {locations_text}"
+            
+            # ... rest of the analysis code ...
+            
+            return "No creators found matching your search criteria. Try adjusting your filters or search terms."
+            
+        except Exception as e:
+            print(f"Error analyzing no results: {e}")
+            return "No creators found matching your search criteria"
     
     def _fallback_search(
         self,
