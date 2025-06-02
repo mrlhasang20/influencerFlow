@@ -3,12 +3,29 @@ from sqlalchemy import create_engine, Column, String, Integer, Float, JSON, Date
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
-from .config import settings
+from shared.config import settings
+from sqlalchemy.types import TypeDecorator
+from typing import List, Dict, Any
+import json
 
 # Database engine
 engine = create_engine(settings.postgres_url, echo=settings.debug)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+# Custom JSON type with safe defaults
+class SafeJSON(TypeDecorator):
+    impl = JSON
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return []
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return []
+        return value
 
 # Database Models
 class Creator(Base):
@@ -38,15 +55,16 @@ class Campaign(Base):
     id = Column(String, primary_key=True, index=True)
     brand_name = Column(String, nullable=False)
     campaign_name = Column(String, nullable=False)
-    description = Column(String)
-    target_audience = Column(String)
-    budget_range = Column(String)
-    timeline = Column(String)
-    deliverables = Column(JSON, default=[])
-    status = Column(String, default="draft")
-    created_by = Column(String, ForeignKey("users.id"))
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    description = Column(String, nullable=True, server_default="")
+    target_audience = Column(String, nullable=True, server_default="")
+    budget_range = Column(String, nullable=True, server_default="")
+    timeline = Column(String, nullable=True, server_default="")
+    platforms = Column(JSON, nullable=True, default=lambda: [])
+    content_types = Column(JSON, nullable=True, default=lambda: [])
+    campaign_goals = Column(JSON, nullable=True, default=lambda: [])
+    status = Column(String, nullable=False, server_default="draft")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class Collaboration(Base):
     __tablename__ = "collaborations"

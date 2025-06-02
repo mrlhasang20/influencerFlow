@@ -2,7 +2,7 @@
 import Link from 'next/link';
 
 interface Campaign {
-  campaign_id: string;
+  id: string;
   campaign_name: string;
   brand_name: string;
   status: string;
@@ -18,15 +18,15 @@ const CampaignCard = ({ campaign }: CampaignCardProps) => {
   // Add logging to debug the campaign data
   console.log('Campaign in card:', campaign);
 
-  // Only render if we have a valid campaign_id
-  if (!campaign?.campaign_id) {
+  // Only render if we have a valid id
+  if (!campaign?.id) {
     console.error('Campaign missing ID:', campaign);
     return null;
   }
 
   return (
     <Link 
-      href={`/campaigns/${campaign.campaign_id}`}
+      href={`/campaigns/${campaign.id}`}
       className="block bg-white p-6 rounded-lg shadow-md hover:shadow-lg transition-shadow"
     >
       <div className="space-y-2">

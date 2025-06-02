@@ -82,7 +82,7 @@ import CampaignCard from '@/components/CampaignCard'
 import CreateCampaignModal from '@/components/CreateCampaignModal'
 
 interface Campaign {
-  campaign_id: string;
+  id: string;
   campaign_name: string;
   brand_name: string;
   status: string;
@@ -104,9 +104,9 @@ export default function CampaignsPage() {
         const campaignsList = data.campaigns || []
         console.log('Processed campaigns list:', campaignsList)
         
-        // Validate each campaign has a campaign_id
+        // Validate each campaign has an id
         const validCampaigns = campaignsList.filter(campaign => {
-          if (!campaign.campaign_id) {
+          if (!campaign.id) {
             console.error('Campaign missing ID:', campaign)
             return false
           }
@@ -159,8 +159,8 @@ export default function CampaignsPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {campaigns.map((campaign: Campaign) => (
-            campaign.campaign_id ? (
-              <CampaignCard key={campaign.campaign_id} campaign={campaign} />
+            campaign.id ? (
+              <CampaignCard key={campaign.id} campaign={campaign} />
             ) : null
           ))}
         </div>

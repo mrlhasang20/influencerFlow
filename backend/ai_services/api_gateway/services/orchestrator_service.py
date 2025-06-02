@@ -133,47 +133,23 @@ class OrchestratorService:
 
     async def get_campaign_workflow_status(self, campaign_id: str) -> Dict[str, Any]:
         """Get the current status of the campaign workflow"""
-        # For demo purposes, return mock data
-        return {
-            "recommended_creators": [
-                {
-                    "id": "creator_1",
-                    "name": "Fashion Influencer",
-                    "platform": "Instagram",
-                    "followers": 1000000,
-                    "engagement_rate": 3.5,
-                    "match_score": 0.95
-                },
-                {
-                    "id": "creator_2",
-                    "name": "Lifestyle Creator",
-                    "platform": "YouTube",
-                    "followers": 500000,
-                    "engagement_rate": 4.2,
-                    "match_score": 0.92
-                }
-            ],
-            "outreach_messages": [
-                {
-                    "creator_id": "creator_1",
-                    "subject": "Collaboration Opportunity",
-                    "status": "sent"
-                },
-                {
-                    "creator_id": "creator_2",
-                    "subject": "Campaign Partnership",
-                    "status": "draft"
-                }
-            ],
-            "draft_contracts": [
-                {
-                    "creator_id": "creator_1",
-                    "status": "negotiating",
-                    "payment_milestones": [
-                        {"percentage": 30, "description": "Upon signing"},
-                        {"percentage": 40, "description": "Content delivery"},
-                        {"percentage": 30, "description": "Campaign completion"}
-                    ]
-                }
-            ]
-        }
+        try:
+            if not campaign_id:
+                raise ValueError("Campaign ID is required")
+
+            # Return safe default data structure
+            return {
+                "recommended_creators": [],
+                "outreach_messages": [],
+                "draft_contracts": [],
+                "payment_plans": []
+            }
+        except Exception as e:
+            print(f"Error in get_campaign_workflow_status: {str(e)}")
+            # Return safe defaults instead of raising
+            return {
+                "recommended_creators": [],
+                "outreach_messages": [],
+                "draft_contracts": [],
+                "payment_plans": []
+            }

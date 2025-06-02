@@ -176,7 +176,8 @@ async def get_campaign(campaign_id: str, db: Session = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Unexpected error in get_campaign: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 @router.get("/")
 async def list_campaigns(
