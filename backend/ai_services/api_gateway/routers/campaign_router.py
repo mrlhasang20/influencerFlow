@@ -7,6 +7,8 @@ from fastapi import APIRouter, HTTPException, Depends
 from typing import Dict, Any, List
 import httpx
 from sqlalchemy.orm import Session
+import uuid
+import asyncio
 
 # Add the parent directory to Python path
 sys.path.append(str(Path(__file__).parent.parent.parent))
@@ -30,27 +32,64 @@ orchestrator = OrchestratorService()
 async def create_campaign(campaign_data: Dict[str, Any], db: Session = Depends(get_db)):
     """Create a new campaign"""
     try:
+        # Print received data for debugging
+        print("Received campaign data:", campaign_data)
+        
+        # Generate a unique campaign ID
+        campaign_id = f"camp_{uuid.uuid4().hex[:8]}"
+        campaign_data["id"] = campaign_id
+        
+        # Set default values for JSON fields
+        campaign_data.setdefault("platforms", [])
+        campaign_data.setdefault("content_types", [])
+        campaign_data.setdefault("campaign_goals", [])
+        campaign_data.setdefault("workflow_data", {})
+        campaign_data.setdefault("status", "draft")
+        
+        # Remove deliverables if present (we'll add it back with proper default)
+        if "deliverables" in campaign_data:
+            del campaign_data["deliverables"]
+        
+        # Convert any None values to empty strings for string fields
+        for field in ["description", "target_audience", "budget_range", "timeline"]:
+            if campaign_data.get(field) is None:
+                campaign_data[field] = ""
+        
         # Create the campaign in the database
-        new_campaign = Campaign(**campaign_data)
-        db.add(new_campaign)
-        db.commit()
-        db.refresh(new_campaign)
+        try:
+            new_campaign = Campaign(**campaign_data)
+            new_campaign.deliverables = []  # Set empty list after creation
+            db.add(new_campaign)
+            db.commit()
+            db.refresh(new_campaign)
+        except Exception as db_error:
+            print("Database error:", str(db_error))
+            raise HTTPException(status_code=500, detail=f"Database error: {str(db_error)}")
 
-        # Start the AI workflow
-        workflow_result = await orchestrator.create_complete_campaign(campaign_data, db)
-
-        return {
+        # Return basic campaign info first
+        response = {
             "id": new_campaign.id,
             "brand_name": new_campaign.brand_name,
             "campaign_name": new_campaign.campaign_name,
-            "description": new_campaign.description,
+            "description": new_campaign.description or "",
+            "target_audience": new_campaign.target_audience or "",
+            "budget_range": new_campaign.budget_range or "",
+            "timeline": new_campaign.timeline or "",
+            "platforms": new_campaign.platforms or [],
+            "content_types": new_campaign.content_types or [],
+            "campaign_goals": new_campaign.campaign_goals or [],
             "status": new_campaign.status,
-            "created_at": str(new_campaign.created_at),
-            "workflow": workflow_result
+            "created_at": str(new_campaign.created_at)
         }
+        
+        return response
+        
+    except HTTPException as he:
+        raise he
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Campaign creation error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create campaign: {str(e)}")
 
 @router.post("/demo")
 async def create_demo_campaign():
@@ -156,27 +195,15 @@ async def list_campaigns(db: Session = Depends(get_db)):
                 
             campaign_list.append({
                 "id": str(c.id),  # Ensure ID is a string
-                "brand_name": c.brand_name,
-                "campaign_name": c.campaign_name,
+                    "brand_name": c.brand_name,
+                    "campaign_name": c.campaign_name,
                 "description": c.description,
-                "status": c.status,
+                    "status": c.status,
                 "created_at": str(c.created_at)
             })
             
         return {"campaigns": campaign_list}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/campaigns", response_model=CampaignResponse)
-async def create_campaign(campaign: CampaignCreate, db: Session = Depends(get_db)):
-    try:
-        new_campaign = Campaign(**campaign.dict())
-        db.add(new_campaign)
-        db.commit()
-        db.refresh(new_campaign)
-        return new_campaign
-    except Exception as e:
-        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/campaigns", response_model=List[CampaignResponse])

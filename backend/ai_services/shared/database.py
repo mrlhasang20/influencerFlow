@@ -62,9 +62,11 @@ class Campaign(Base):
     platforms = Column(JSON, nullable=True, default=lambda: [])
     content_types = Column(JSON, nullable=True, default=lambda: [])
     campaign_goals = Column(JSON, nullable=True, default=lambda: [])
+    deliverables = Column(JSON, nullable=True, default=lambda: [])
     status = Column(String, nullable=False, server_default="draft")
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    workflow_data = Column(JSON, nullable=True, default=dict)
 
 class Collaboration(Base):
     __tablename__ = "collaborations"

@@ -18,7 +18,7 @@ const campaignSchema = z.object({
   timeline: z.string().min(1, "Timeline is required"),
   platforms: z.array(z.string()).min(1, "Select at least one platform"),
   content_types: z.array(z.string()).min(1, "Select at least one content type"),
-  campaign_goals: z.array(z.string()).min(1, "Select at least one goal")
+  campaign_goals: z.array(z.string()).min(1, "Select at least one goal"),
 })
 
 type CampaignFormData = z.infer<typeof campaignSchema>
@@ -42,19 +42,40 @@ const CreateCampaignModal = ({ isOpen, onClose }: CreateCampaignModalProps) => {
 
   const createCampaign = useMutation({
     mutationFn: async (data: CampaignFormData) => {
-      const response = await axios.post('http://localhost:8000/api/v1/campaigns', data)
-      return response.data
+      try {
+        // Convert form data to match backend expectations
+        const campaignData = {
+          ...data,
+          // Convert checkbox values to lowercase without spaces
+          platforms: data.platforms.map(p => p.toLowerCase()),
+          content_types: data.content_types.map(t => t.toLowerCase()),
+          campaign_goals: data.campaign_goals.map(g => g.toLowerCase().replace(" ", "_")),
+          // Add required fields with defaults
+          status: "draft",
+          workflow_data: {}
+        }
+        
+        console.log('Sending campaign data:', campaignData);
+        const response = await axios.post('http://localhost:8000/api/v1/campaigns', campaignData);
+        console.log('Campaign created successfully:', response.data);
+        return response.data;
+      } catch (error) {
+        console.error('Error creating campaign:', error);
+        if (axios.isAxiosError(error)) {
+          throw new Error(error.response?.data?.detail || 'Failed to create campaign');
+        }
+        throw error;
+      }
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries(['campaigns'])
       reset()
       onClose()
-      // Navigate to the new campaign's details page
       router.push(`/campaigns/${data.id}`)
     },
     onError: (error) => {
       console.error('Failed to create campaign:', error)
-      alert('Failed to create campaign. Please try again.')
+      alert(error instanceof Error ? error.message : 'Failed to create campaign. Please try again.')
     }
   })
 
@@ -160,12 +181,12 @@ const CreateCampaignModal = ({ isOpen, onClose }: CreateCampaignModalProps) => {
                 {errors.platforms && <p className="text-red-500 text-sm mt-1">{errors.platforms.message}</p>}
               </div>
 
-              <div>
+            <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Content Types *</label>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                   {["Posts", "Stories", "Videos", "Reels", "Shorts", "Live"].map(type => (
                     <label key={type} className="inline-flex items-center bg-gray-50 p-3 rounded-lg hover:bg-gray-100">
-                      <input
+              <input
                         type="checkbox"
                         {...register("content_types")}
                         value={type}
@@ -176,8 +197,8 @@ const CreateCampaignModal = ({ isOpen, onClose }: CreateCampaignModalProps) => {
                   ))}
                 </div>
                 {errors.content_types && <p className="text-red-500 text-sm mt-1">{errors.content_types.message}</p>}
-              </div>
-
+            </div>
+            
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Campaign Goals *</label>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">

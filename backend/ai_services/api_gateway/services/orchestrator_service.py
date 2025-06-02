@@ -41,112 +41,164 @@ class OrchestratorService:
             # 5. Set up payment milestones
             payment_plans = await self._setup_payment_milestones(campaign, creators)
             
-            return {
+            # Update campaign with workflow data
+            campaign_dict = {
                 "campaign_id": campaign.id,
-                "status": "created",
+                "status": "in_progress",
                 "recommended_creators": creators,
                 "outreach_messages": outreach_messages,
                 "draft_contracts": contracts,
                 "payment_plans": payment_plans
             }
             
+            # Store workflow data in database
+            campaign.workflow_data = campaign_dict
+            db.commit()
+            
+            return campaign_dict
+            
         except Exception as e:
             db.rollback()
             raise Exception(f"Failed to create campaign: {str(e)}")
     
     async def _find_top_creators(self, campaign_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Find top 3 creators matching campaign requirements"""
-        # For demo, return mock data
-        return [
-            {
-                "id": "creator_1",
-                "name": "Top Fashion Influencer",
-                "platform": "Instagram",
-                "followers": 1000000,
-                "engagement_rate": 3.5,
-                "match_score": 0.95
-            },
-            {
-                "id": "creator_2",
-                "name": "Lifestyle Creator",
-                "platform": "YouTube",
-                "followers": 500000,
-                "engagement_rate": 4.2,
-                "match_score": 0.92
-            },
-            {
-                "id": "creator_3",
-                "name": "Beauty Expert",
-                "platform": "Instagram",
-                "followers": 750000,
-                "engagement_rate": 3.8,
-                "match_score": 0.89
-            }
-        ]
+        """Find top creators matching campaign requirements using AI"""
+        try:
+            # Make API call to creator discovery service
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"http://localhost:{settings.creator_discovery_port}/api/v1/creators/search",
+                    json={
+                        "campaign": campaign_data,
+                        "filters": {
+                            "platforms": campaign_data.get("platforms", []),
+                            "min_followers": 1000,
+                            "min_engagement_rate": 1.0,
+                            "categories": campaign_data.get("content_types", [])
+                        },
+                        "limit": 3
+                    }
+                )
+                
+                if response.status_code == 200:
+                    return response.json().get("creators", [])
+                return []
+        except Exception as e:
+            print(f"Error finding creators: {e}")
+            return []
     
     async def _generate_outreach_messages(self, campaign: CampaignORM, creators: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Generate personalized outreach messages for each creator"""
-        messages = []
-        for creator in creators:
-            message = {
-                "creator_id": creator["id"],
-                "subject": f"Collaboration Opportunity: {campaign.campaign_name}",
-                "message": f"Hi {creator['name']},\n\nWe love your content and would like to collaborate with you on our {campaign.campaign_name} campaign...",
-                "status": "draft"
+        """Generate personalized outreach messages using AI"""
+        try:
+            # Prepare campaign brief
+            campaign_brief = {
+                "brand_name": campaign.brand_name,
+                "campaign_name": campaign.campaign_name,
+                "description": campaign.description,
+                "target_audience": campaign.target_audience,
+                "budget_range": campaign.budget_range,
+                "timeline": campaign.timeline,
+                "platforms": campaign.platforms,
+                "content_types": campaign.content_types,
+                "campaign_goals": campaign.campaign_goals
             }
-            messages.append(message)
-        return messages
+            
+            # Make API call to AI communication service
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"http://localhost:{settings.ai_communication_port}/api/v1/outreach/batch",
+                    json={
+                        "creator_profiles": creators,
+                        "campaign_brief": campaign_brief,
+                        "message_type": "initial_outreach",
+                        "personalization_level": "high"
+                    }
+                )
+                
+                if response.status_code == 200:
+                    return response.json().get("messages", [])
+                return []
+        except Exception as e:
+            print(f"Error generating outreach: {e}")
+            return []
     
     async def _create_draft_contracts(self, campaign: CampaignORM, creators: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Create draft contracts for each creator"""
-        contracts = []
-        for creator in creators:
-            contract = {
-                "creator_id": creator["id"],
-                "campaign_id": campaign.id,
-                "terms": {
-                    "deliverables": campaign.content_types,
-                    "timeline": campaign.timeline,
-                    "compensation": f"Based on {campaign.budget_range}"
-                },
-                "status": "draft"
-            }
-            contracts.append(contract)
-        return contracts
+        """Create AI-generated draft contracts"""
+        try:
+            contracts = []
+            for creator in creators:
+                # Make API call to contract automation service
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        f"http://localhost:{settings.contract_automation_port}/api/v1/contracts/generate",
+                            json={
+                            "campaign_id": campaign.id,
+                            "creator": creator,
+                            "terms": {
+                                "deliverables": campaign.content_types,
+                                "timeline": campaign.timeline,
+                                "compensation": campaign.budget_range,
+                                "platforms": campaign.platforms
+                            }
+                        }
+                    )
+                    
+                    if response.status_code == 200:
+                        contracts.append(response.json())
+            return contracts
+        except Exception as e:
+            print(f"Error creating contracts: {e}")
+            return []
     
     async def _setup_payment_milestones(self, campaign: CampaignORM, creators: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Set up payment milestones for each creator"""
-        payment_plans = []
-        for creator in creators:
-            plan = {
-                "creator_id": creator["id"],
-                "campaign_id": campaign.id,
-                "milestones": [
-                    {"percentage": 30, "description": "Upon contract signing"},
-                    {"percentage": 40, "description": "Upon content submission"},
-                    {"percentage": 30, "description": "Upon campaign completion"}
-                ],
-                "status": "draft"
-            }
-            payment_plans.append(plan)
-        return payment_plans
+        try:
+            payment_plans = []
+            for creator in creators:
+                plan = {
+                    "creator_id": creator["id"],
+                    "campaign_id": campaign.id,
+                    "milestones": [
+                        {"percentage": 30, "description": "Upon contract signing"},
+                        {"percentage": 40, "description": "Upon content submission"},
+                        {"percentage": 30, "description": "Upon campaign completion"}
+                    ],
+                    "status": "draft"
+                }
+                payment_plans.append(plan)
+            return payment_plans
+        except Exception as e:
+            print(f"Error setting up payments: {e}")
+            return []
 
     async def get_campaign_workflow_status(self, campaign_id: str) -> Dict[str, Any]:
         """Get the current status of the campaign workflow"""
         try:
             if not campaign_id:
                 raise ValueError("Campaign ID is required")
-
-            # Return safe default data structure
-            return {
+            
+            # Get campaign from database
+            db = next(get_db())
+            campaign = db.query(CampaignORM).filter(CampaignORM.id == campaign_id).first()
+            
+            if not campaign:
+                return {
+                    "recommended_creators": [],
+                    "outreach_messages": [],
+                    "draft_contracts": [],
+                    "payment_plans": []
+                }
+            
+            # Return workflow data if it exists
+            return campaign.workflow_data or {
                 "recommended_creators": [],
                 "outreach_messages": [],
                 "draft_contracts": [],
                 "payment_plans": []
             }
+            
         except Exception as e:
             print(f"Error in get_campaign_workflow_status: {str(e)}")
-            # Return safe defaults instead of raising
             return {
                 "recommended_creators": [],
                 "outreach_messages": [],
