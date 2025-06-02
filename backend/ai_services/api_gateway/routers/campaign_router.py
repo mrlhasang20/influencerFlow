@@ -89,35 +89,59 @@ async def create_demo_campaign():
 async def get_campaign(campaign_id: str, db: Session = Depends(get_db)):
     """Get campaign details by ID"""
     try:
-        campaign = db.query(CampaignORM).filter(CampaignORM.id == campaign_id).first()
-        if not campaign:
-            raise HTTPException(status_code=404, detail="Campaign not found")
-        
-        # Get AI workflow data
-        workflow_data = await orchestrator.get_campaign_workflow_status(campaign_id)
-        
-        return {
-            "id": campaign.id,  # Changed from campaign_id to id to match frontend
-            "brand_name": campaign.brand_name,
-            "campaign_name": campaign.campaign_name,
-            "description": campaign.description,
-            "target_audience": campaign.target_audience,
-            "budget_range": campaign.budget_range,
-            "timeline": campaign.timeline,
-            "platforms": campaign.platforms,
-            "content_types": campaign.content_types,
-            "campaign_goals": campaign.campaign_goals,
-            "status": campaign.status,
-            "created_at": campaign.created_at,
-            "updated_at": campaign.updated_at,
-            # Add AI workflow data
-            "recommended_creators": workflow_data.get("recommended_creators", []),
-            "outreach_messages": workflow_data.get("outreach_messages", []),
-            "draft_contracts": workflow_data.get("draft_contracts", []),
-            "payment_plans": workflow_data.get("payment_plans", [])
+        # Get campaign from database with error handling
+        try:
+            campaign = db.query(CampaignORM).filter(CampaignORM.id == campaign_id).first()
+            if not campaign:
+                raise HTTPException(status_code=404, detail=f"Campaign with ID {campaign_id} not found")
+        except Exception as db_error:
+            print(f"Database error: {str(db_error)}")
+            raise HTTPException(status_code=500, detail=f"Database error: {str(db_error)}")
+
+        # Create base response with safe defaults
+        campaign_dict = {
+            "id": campaign.id,
+            "brand_name": campaign.brand_name or "",
+            "campaign_name": campaign.campaign_name or "",
+            "description": campaign.description or "",
+            "status": campaign.status or "draft",
+            "created_at": str(campaign.created_at),
+            "updated_at": str(campaign.updated_at) if campaign.updated_at else None,
+            "target_audience": campaign.target_audience or "",
+            "budget_range": campaign.budget_range or "",
+            "timeline": campaign.timeline or "",
+            # Safely handle JSON fields with proper defaults
+            "platforms": campaign.platforms if campaign.platforms is not None else [],
+            "content_types": campaign.content_types if campaign.content_types is not None else [],
+            "campaign_goals": campaign.campaign_goals if campaign.campaign_goals is not None else [],
         }
+
+        # Add workflow data with safe error handling
+        try:
+            workflow_data = await orchestrator.get_campaign_workflow_status(campaign_id)
+            if workflow_data and isinstance(workflow_data, dict):
+                campaign_dict.update({
+                    "recommended_creators": workflow_data.get("recommended_creators", []),
+                    "outreach_messages": workflow_data.get("outreach_messages", []),
+                    "draft_contracts": workflow_data.get("draft_contracts", []),
+                    "payment_plans": workflow_data.get("payment_plans", [])
+                })
+        except Exception as workflow_error:
+            print(f"Workflow data error: {str(workflow_error)}")
+            campaign_dict.update({
+                "recommended_creators": [],
+                "outreach_messages": [],
+                "draft_contracts": [],
+                "payment_plans": []
+            })
+
+        return campaign_dict
+
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Unexpected error in get_campaign: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 @router.get("/")
 async def list_campaigns(db: Session = Depends(get_db)):

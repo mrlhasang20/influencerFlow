@@ -55,16 +55,39 @@ export default function CampaignDetailsPage() {
     queryFn: async () => {
       try {
         const { data } = await axios.get(`http://localhost:8000/api/v1/campaigns/${campaignId}`)
-        return data
+        
+        // Ensure all required fields have defaults
+        return {
+          id: data.id,
+          campaign_name: data.campaign_name || '',
+          brand_name: data.brand_name || '',
+          description: data.description || '',
+          target_audience: data.target_audience || '',
+          budget_range: data.budget_range || '',
+          timeline: data.timeline || '',
+          platforms: Array.isArray(data.platforms) ? data.platforms : [],
+          content_types: Array.isArray(data.content_types) ? data.content_types : [],
+          campaign_goals: Array.isArray(data.campaign_goals) ? data.campaign_goals : [],
+          status: data.status || 'draft',
+          created_at: data.created_at,
+          recommended_creators: Array.isArray(data.recommended_creators) ? data.recommended_creators : [],
+          outreach_messages: Array.isArray(data.outreach_messages) ? data.outreach_messages : [],
+          draft_contracts: Array.isArray(data.draft_contracts) ? data.draft_contracts : [],
+        }
       } catch (error) {
-        if (axios.isAxiosError(error) && error.response?.status === 404) {
-          router.push('/campaigns')
+        if (axios.isAxiosError(error)) {
+          if (error.response?.status === 404) {
+            router.push('/campaigns')
+          }
+          console.error('API Error:', error.response?.data)
+          throw new Error(error.response?.data?.detail || 'Failed to fetch campaign details')
         }
         throw error
       }
     },
     enabled: !!campaignId,
-    retry: 1
+    retry: 1,
+    retryDelay: 1000
   })
 
   if (isLoading) {
