@@ -1,3 +1,24 @@
+"use client";
+
+import { CampaignDetails } from "@/components/campaigns/CampaignDetails";
+import { Toaster } from "react-hot-toast";
+
+// Keep the component synchronous, handle async operations in the child component
+export default function CampaignDetailsPage({
+  params,
+}: {
+  params: { id: string };
+}) {
+  return (
+    <main className="min-h-screen bg-gray-50 py-8">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        {/* Pass the raw id, let the component handle the async fetching */}
+        <CampaignDetails campaignId={params.id} />
+      </div>
+      <Toaster position="top-right" />
+    </main>
+  );
+}
 'use client'
 
 import { useQuery } from '@tanstack/react-query'
