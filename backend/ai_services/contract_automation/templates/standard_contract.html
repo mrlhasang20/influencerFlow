@@ -1,0 +1,19 @@
+<html>
+    <body>
+      <h1>INFLUENCER MARKETING AGREEMENT</h1>
+      <p>Brand: {{ brand_name }}</p>
+      <p>Influencer: {{ influencer_name }}</p>
+      <p>Platform: {{ platform }}</p>
+      <p>Campaign: {{ campaign_name }}</p>
+      <p>Start: {{ start_date }}</p>
+      <p>End: {{ end_date }}</p>
+      <h2>Deliverables</h2>
+      {% for deliverable in deliverables %}
+        <p>- {{ deliverable.type }}: {{ deliverable.description }} (Due: {{ deliverable.due_date }})</p>
+      {% endfor %}
+      <h2>Compensation</h2>
+      <p>Total Fee: ${{ total_fee }}</p>
+      <h2>Terms</h2>
+      <p>{{ terms_and_conditions }}</p>
+    </body>
+  </html>
